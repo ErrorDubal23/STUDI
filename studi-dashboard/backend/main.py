@@ -1042,7 +1042,11 @@ async def _audio_watcher_loop():
         try:
             if AUDIO_INBOX_DIR.exists():
                 for path in sorted(AUDIO_INBOX_DIR.glob("*.webm")):
-                    _procesar_audio_pendiente(path)
+                    # _procesar_audio_pendiente es sincrona y bloqueante
+                    # (subprocess de Whisper, llamada HTTP a Ollama). Correrla
+                    # directo aqui congelaria el unico hilo del event loop --
+                    # y con el, toda la API -- mientras dura la transcripcion.
+                    await asyncio.to_thread(_procesar_audio_pendiente, path)
         except Exception as exc:
             print(f"[audio-watcher] error inesperado: {exc}")
         await asyncio.sleep(AUDIO_WATCH_INTERVAL)
