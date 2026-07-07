@@ -1,7 +1,7 @@
-import { subjectById } from "../lib/subjects.js";
+import { useSubjectById } from "../lib/MateriasContext.jsx";
 
 export function SubjectDot({ materiaId, className = "h-2.5 w-2.5" }) {
-  const subject = subjectById(materiaId);
+  const subject = useSubjectById(materiaId);
   return (
     <span
       className={`inline-block shrink-0 rounded-full ${className}`}
@@ -11,7 +11,7 @@ export function SubjectDot({ materiaId, className = "h-2.5 w-2.5" }) {
 }
 
 export function SubjectChip({ materiaId, active, onClick, label }) {
-  const subject = subjectById(materiaId);
+  const subject = useSubjectById(materiaId);
   return (
     <button
       type="button"

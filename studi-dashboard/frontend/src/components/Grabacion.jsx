@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api.js";
-import { SUBJECTS } from "../lib/subjects.js";
+import { useMaterias } from "../lib/MateriasContext.jsx";
 import { SubjectChip, Card } from "./ui.jsx";
 import { IconGrabar, IconStop, IconCheck } from "./Icons.jsx";
 
@@ -11,7 +11,8 @@ function formatDuracion(segundos) {
 }
 
 export default function Grabacion() {
-  const [materiaId, setMateriaId] = useState(SUBJECTS[0].id);
+  const { materias } = useMaterias();
+  const [materiaId, setMateriaId] = useState(null);
   const [estado, setEstado] = useState("inactivo"); // inactivo | grabando | listo | subiendo | subido
   const [duracion, setDuracion] = useState(0);
   const [progreso, setProgreso] = useState(0);
@@ -24,6 +25,10 @@ export default function Grabacion() {
   const timerRef = useRef(null);
 
   useEffect(() => () => clearInterval(timerRef.current), []);
+
+  useEffect(() => {
+    if (materiaId === null && materias.length > 0) setMateriaId(materias[0].id);
+  }, [materiaId, materias]);
 
   async function iniciarGrabacion() {
     setError(null);
@@ -79,7 +84,7 @@ export default function Grabacion() {
       <div>
         <p className="mb-2 text-[12px] uppercase tracking-wide text-ink-muted">Materia</p>
         <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
-          {SUBJECTS.map((s) => (
+          {materias.map((s) => (
             <SubjectChip
               key={s.id}
               materiaId={s.id}

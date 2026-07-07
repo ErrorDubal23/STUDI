@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api.js";
-import { SUBJECTS } from "../lib/subjects.js";
+import { useMaterias } from "../lib/MateriasContext.jsx";
 import { SubjectChip, SubjectDot, StateMessage, Card } from "./ui.jsx";
 import { IconChevron } from "./Icons.jsx";
 
@@ -12,6 +12,7 @@ function formatFecha(fecha) {
 }
 
 export default function Fichas() {
+  const { materias } = useMaterias();
   const [fichas, setFichas] = useState(null);
   const [error, setError] = useState(null);
   const [filtro, setFiltro] = useState(null);
@@ -27,8 +28,8 @@ export default function Fichas() {
   const materiasConFichas = useMemo(() => {
     if (!fichas) return [];
     const ids = new Set(fichas.map((f) => f.materia_id));
-    return SUBJECTS.filter((s) => ids.has(s.id));
-  }, [fichas]);
+    return materias.filter((s) => ids.has(s.id));
+  }, [fichas, materias]);
 
   const visibles = useMemo(() => {
     if (!fichas) return [];

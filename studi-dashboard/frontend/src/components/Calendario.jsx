@@ -1,12 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api.js";
+import { useMaterias } from "../lib/MateriasContext.jsx";
 import { SubjectDot, StateMessage, Card } from "./ui.jsx";
 
 const DIAS = ["L", "M", "X", "J", "V", "S", "D"];
+const DIAS_SEMANA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const MESES = [
   "enero", "febrero", "marzo", "abril", "mayo", "junio",
   "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
 ];
+
+// Horario is recurring by day-of-week (from cada materia.horario), not tied
+// to a specific calendar date -- se agrupa por dia, no por semana navegable.
+function buildHorarioSemanal(materias) {
+  const porDia = new Map(DIAS_SEMANA.map((d) => [d, []]));
+  for (const materia of materias) {
+    for (const bloque of materia.horario ?? []) {
+      if (!porDia.has(bloque.dia)) continue;
+      porDia.get(bloque.dia).push({
+        materiaId: materia.id,
+        nombre: materia.nombre,
+        horaInicio: bloque.hora_inicio,
+        horaFin: bloque.hora_fin,
+      });
+    }
+  }
+  for (const lista of porDia.values()) {
+    lista.sort((a, b) => a.horaInicio.localeCompare(b.horaInicio));
+  }
+  return porDia;
+}
 
 function toISO(d) {
   return d.toISOString().slice(0, 10);
@@ -24,6 +47,8 @@ function buildMonthGrid(year, month) {
 }
 
 export default function Calendario() {
+  const { materias } = useMaterias();
+  const [vista, setVista] = useState("mes"); // mes | semana
   const [eventos, setEventos] = useState(null);
   const [error, setError] = useState(null);
   const today = useMemo(() => new Date(), []);
@@ -46,9 +71,11 @@ export default function Calendario() {
     return map;
   }, [eventos]);
 
+  const horarioSemanal = useMemo(() => buildHorarioSemanal(materias), [materias]);
   const celdas = useMemo(() => buildMonthGrid(cursor.year, cursor.month), [cursor]);
   const eventosDelDia = eventosPorFecha.get(seleccionado) ?? [];
   const todayISO = toISO(today);
+  const hoyNombreDia = DIAS_SEMANA[(today.getDay() + 6) % 7];
 
   function cambiarMes(delta) {
     const next = new Date(cursor.year, cursor.month + delta, 1);
@@ -59,6 +86,67 @@ export default function Calendario() {
 
   return (
     <div>
+      <div className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 pb-1">
+        <button
+          type="button"
+          onClick={() => setVista("mes")}
+          className={`shrink-0 rounded-full border px-3.5 py-1.5 text-[13px] transition-colors ${
+            vista === "mes"
+              ? "border-transparent bg-ink text-white dark:bg-ink-dark dark:text-plane-dark"
+              : "border-hairline text-ink-secondary dark:border-hairline-dark dark:text-ink-dark-secondary"
+          }`}
+        >
+          Mes
+        </button>
+        <button
+          type="button"
+          onClick={() => setVista("semana")}
+          className={`shrink-0 rounded-full border px-3.5 py-1.5 text-[13px] transition-colors ${
+            vista === "semana"
+              ? "border-transparent bg-ink text-white dark:bg-ink-dark dark:text-plane-dark"
+              : "border-hairline text-ink-secondary dark:border-hairline-dark dark:text-ink-dark-secondary"
+          }`}
+        >
+          Horario semanal
+        </button>
+      </div>
+
+      {vista === "semana" && (
+        <div className="flex flex-col gap-4">
+          {DIAS_SEMANA.map((dia) => {
+            const bloques = horarioSemanal.get(dia) ?? [];
+            return (
+              <div key={dia}>
+                <p
+                  className={`mb-1.5 text-[12px] font-medium uppercase tracking-wide ${
+                    dia === hoyNombreDia ? "text-ink dark:text-ink-dark" : "text-ink-muted"
+                  }`}
+                >
+                  {dia} {dia === hoyNombreDia && "· Hoy"}
+                </p>
+                {bloques.length === 0 ? (
+                  <p className="text-[13px] text-ink-muted">Sin clases.</p>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {bloques.map((b, idx) => (
+                      <Card key={idx} className="flex items-center gap-2.5 py-2.5">
+                        <SubjectDot materiaId={b.materiaId} />
+                        <span className="flex-1 truncate text-[13px]">{b.nombre}</span>
+                        <span className="text-[12px] tabular-nums text-ink-muted">
+                          {b.horaInicio}–{b.horaFin}
+                        </span>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {vista === "mes" && (
+      <>
       <div className="mb-3 flex items-center justify-between">
         <button
           type="button"
@@ -145,6 +233,8 @@ export default function Calendario() {
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }

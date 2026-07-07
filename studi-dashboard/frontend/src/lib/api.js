@@ -10,6 +10,13 @@ async function request(path, options = {}) {
   return res.json();
 }
 
+function requestJSON(path, options = {}) {
+  return request(path, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+  });
+}
+
 export const api = {
   status: () => request("/status"),
   fichas: (materiaId) => request(`/fichas${materiaId ? `?materia=${materiaId}` : ""}`),
@@ -17,6 +24,13 @@ export const api = {
   repaso: () => request("/repaso"),
   brightspace: (materiaId) => request(`/brightspace${materiaId ? `?materia=${materiaId}` : ""}`),
   calendario: () => request("/calendario"),
+
+  materias: () => request("/materias"),
+  crearMateria: (payload) => requestJSON("/materias", { method: "POST", body: JSON.stringify(payload) }),
+  editarMateria: (id, payload) =>
+    requestJSON(`/materias/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(payload) }),
+  borrarMateria: (id) => request(`/materias/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  nuevoSemestre: (etiqueta) => requestJSON("/semestre/nuevo", { method: "POST", body: JSON.stringify({ etiqueta }) }),
 
   subirAudio: (blob, materiaId, onProgress) =>
     new Promise((resolve, reject) => {
@@ -49,4 +63,11 @@ export const api = {
     form.append("temas", (temas || []).join(", "));
     return request("/talleres/generar", { method: "POST", body: form });
   },
+  talleres: () => request("/talleres"),
+  taller: (id) => request(`/talleres/${encodeURIComponent(id)}`),
+  responderTaller: (id, numero, respuesta) =>
+    requestJSON(`/talleres/${encodeURIComponent(id)}/responder`, {
+      method: "POST",
+      body: JSON.stringify({ numero, respuesta }),
+    }),
 };

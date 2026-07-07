@@ -81,10 +81,47 @@ export function IconStop({ className }) {
   );
 }
 
-export function IconLink({ className }) {
+export function IconMaterias({ className }) {
   return (
     <svg className={className} {...base}>
-      <path d="M9.5 14.5l5-5M8.8 16.2 6.6 18.4a3 3 0 0 1-4.2-4.2l2.2-2.2M15.2 7.8l2.2-2.2a3 3 0 0 1 4.2 4.2l-2.2 2.2" />
+      <path d="M4 6.5A2 2 0 0 1 6 4.5h6.5v15H6a2 2 0 0 1-2-2Z" />
+      <path d="M12.5 4.5H18a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-5.5" />
+      <path d="M7 8.5h3M7 12h3" />
+    </svg>
+  );
+}
+
+export function IconTalleres({ className }) {
+  return (
+    <svg className={className} {...base}>
+      <path d="M12 4.5 4.5 8.5 12 12.5l7.5-4z" />
+      <path d="M7 10.5V16c0 1.1 2.2 2 5 2s5-.9 5-2v-5.5" />
+    </svg>
+  );
+}
+
+export function IconMas({ className }) {
+  return (
+    <svg className={className} {...base}>
+      <circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function IconTrash({ className }) {
+  return (
+    <svg className={className} {...base}>
+      <path d="M5 7h14M9.5 7V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v2M7 7l.8 12a1.5 1.5 0 0 0 1.5 1.4h5.4a1.5 1.5 0 0 0 1.5-1.4L17 7" />
+    </svg>
+  );
+}
+
+export function IconPlus({ className }) {
+  return (
+    <svg className={className} {...base}>
+      <path d="M12 5v14M5 12h14" />
     </svg>
   );
 }

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api.js";
-import { subjectById, SUBJECT_FALLBACK, SUBJECTS } from "../lib/subjects.js";
+import { useMaterias, SUBJECT_FALLBACK } from "../lib/MateriasContext.jsx";
 import { SubjectDot, StateMessage, Card } from "./ui.jsx";
 import { IconCheck } from "./Icons.jsx";
 
 // repaso_hoy.json shape can vary depending on how the scheduler wrote it —
 // normalize the common possibilities into { materiaId, materiaNombre, temas }.
-function normalizeRepaso(data) {
+function normalizeRepaso(data, materias) {
   if (!data) return [];
   const bloques = data.materias || data.items || data.temas || [];
   if (!Array.isArray(bloques)) return [];
@@ -18,7 +18,7 @@ function normalizeRepaso(data) {
     const materiaNombre = bloque.materia || bloque.nombre || bloque.materia_nombre || "General";
     const materiaId =
       bloque.materia_id ||
-      SUBJECTS.find((s) => s.nombre.toLowerCase() === String(materiaNombre).toLowerCase())?.id ||
+      materias.find((s) => s.nombre.toLowerCase() === String(materiaNombre).toLowerCase())?.id ||
       SUBJECT_FALLBACK.id;
     const temas = bloque.temas || bloque.temas_repaso || (bloque.tema ? [bloque.tema] : []);
     return { key: `${materiaId}-${idx}`, materiaId, materiaNombre, temas };
@@ -26,6 +26,7 @@ function normalizeRepaso(data) {
 }
 
 export default function Repaso() {
+  const { materias } = useMaterias();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [enviando, setEnviando] = useState(null);
@@ -38,7 +39,7 @@ export default function Repaso() {
       .catch((err) => setError(err.message));
   }, []);
 
-  const bloques = useMemo(() => normalizeRepaso(data), [data]);
+  const bloques = useMemo(() => normalizeRepaso(data, materias), [data, materias]);
 
   async function generarTaller(bloque) {
     setEnviando(bloque.key);
@@ -61,7 +62,7 @@ export default function Repaso() {
   return (
     <div className="flex flex-col gap-2.5">
       {bloques.map((bloque) => {
-        const subject = subjectById(bloque.materiaId);
+        const subject = materias.find((m) => m.id === bloque.materiaId) || SUBJECT_FALLBACK;
         const yaEnviado = enviados.has(bloque.key);
         return (
           <Card key={bloque.key}>

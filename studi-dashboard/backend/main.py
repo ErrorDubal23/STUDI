@@ -11,7 +11,10 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import unicodedata
+import urllib.error
+import urllib.request
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
@@ -20,6 +23,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -30,53 +34,112 @@ TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
 BRIGHTSPACE_DIR = DATA_DIR / "brightspace"
 AUDIO_INBOX_DIR = DATA_DIR / "audio_pendiente"
 TALLER_REQUESTS_DIR = DATA_DIR / "talleres" / "solicitudes"
+TALLER_GENERADOS_DIR = DATA_DIR / "talleres" / "generados"
 REPASO_FILE = DATA_DIR / "repaso_hoy.json"
+MATERIAS_FILE = DATA_DIR / "materias.json"
+
+# Tutoria interactiva en vivo: le habla directo a Ollama (no al gateway de
+# OpenClaw -- ese solo expone su UI de control y /health, confirmado en
+# servidor). Reutiliza el mismo espiritu socratico de taller_prompt.md, pero
+# como llamada aislada de una sola pregunta, no como sesion de Yoda.
+OLLAMA_URL = os.environ.get("STUDI_OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("STUDI_OLLAMA_MODEL", "kimi-k2.6:cloud")
+# Script de studi-taller que persiste el desempeno por tema (el mismo que usa
+# Yoda por Telegram). Si no existe en esta maquina (ej. en local en el Mac,
+# fuera del servidor), simplemente no se registra el desempeno.
+REGISTRAR_DESEMPENO_SCRIPT = Path(os.environ.get(
+    "STUDI_REGISTRAR_DESEMPENO_SCRIPT",
+    "/home/seh/.openclaw/workspace/skills/studi-taller/registrar_desempeno.py",
+))
 
 FRONTEND_DIST = Path(os.environ.get("STUDI_FRONTEND_DIST", Path(__file__).resolve().parent.parent / "frontend" / "dist"))
 
-# Subject registry: single source of truth for colors + schedule metadata.
-# Keys are matched against the "Materia:" field of each ficha using a loose,
-# accent/case-insensitive containment check (see resolve_subject()).
-SUBJECTS = [
+# Seed used the first time materias.json doesn't exist yet -- matches the
+# semester profile already tracked by the studi-audio skill on the server
+# (skills/studi-audio/semester_profile.json), so the dashboard and Yoda agree
+# on the same subjects out of the box. After the first read, materias.json
+# on disk is the single source of truth; this constant is never read again.
+DEFAULT_SUBJECTS = [
     {
         "id": "algoritmos",
-        "codigo": "IST4310",
         "nombre": "Algoritmos y Complejidad",
+        "codigo": "IST4310",
+        "nrc": "2053",
+        "profesor": "Narvaez Esmeide Alberto",
         "color_light": "#2a78d6",
         "color_dark": "#3987e5",
-        "horario": "Lunes 9-11",
+        "horario": [
+            {"dia": "Lunes", "hora_inicio": "09:00", "hora_fin": "11:00"},
+            {"dia": "Jueves", "hora_inicio": "15:00", "hora_fin": "17:00"},
+        ],
+        "salones": ["94K", "SDU9"],
+        "cortes": [],
+        "es_extracurricular": False,
     },
     {
         "id": "analisis-datos",
-        "codigo": "EST7042",
         "nombre": "Análisis de Datos en Ingeniería I",
+        "codigo": "EST7042",
+        "nrc": "1643",
+        "profesor": "Luis Anillo Arrieta",
         "color_light": "#1baf7a",
         "color_dark": "#199e70",
-        "horario": "Martes, Miércoles, Jueves",
+        "horario": [
+            {"dia": "Martes", "hora_inicio": "10:00", "hora_fin": "12:00"},
+            {"dia": "Miércoles", "hora_inicio": "10:00", "hora_fin": "12:00"},
+            {"dia": "Jueves", "hora_inicio": "09:00", "hora_fin": "10:00"},
+        ],
+        "salones": ["SDU3", "33C", "32C"],
+        "cortes": [],
+        "es_extracurricular": False,
     },
     {
         "id": "diseno-digital",
-        "codigo": "IST7072",
         "nombre": "Diseño Digital",
+        "codigo": "IST7072",
+        "nrc": "2070",
+        "profesor": "Charris Stand Daniela Maria",
         "color_light": "#eda100",
         "color_dark": "#c98500",
-        "horario": "Miércoles, Jueves",
+        "horario": [
+            {"dia": "Miércoles", "hora_inicio": "17:00", "hora_fin": "19:00"},
+            {"dia": "Jueves", "hora_inicio": "13:00", "hora_fin": "14:00"},
+        ],
+        "salones": ["26C", "33J"],
+        "cortes": [],
+        "es_extracurricular": False,
     },
     {
         "id": "estructuras-discretas",
-        "codigo": "IST4330",
         "nombre": "Estructuras Discretas",
+        "codigo": "IST4330",
+        "nrc": "2056",
+        "profesor": "Davila Castellar Kevin Omar",
         "color_light": "#008300",
         "color_dark": "#008300",
-        "horario": "Martes, Jueves",
+        "horario": [
+            {"dia": "Martes", "hora_inicio": "14:00", "hora_fin": "16:00"},
+            {"dia": "Jueves", "hora_inicio": "13:00", "hora_fin": "15:00"},
+        ],
+        "salones": ["23D", "SDU1"],
+        "cortes": [],
+        "es_extracurricular": False,
     },
     {
         "id": "teoria-codigos",
-        "codigo": "MAT4215",
         "nombre": "Teoría de Códigos",
+        "codigo": "MAT4215",
+        "nrc": "2230",
+        "profesor": "Garcia Claro El Javier",
         "color_light": "#4a3aa7",
         "color_dark": "#9085e9",
-        "horario": "Lunes, Miércoles",
+        "horario": [
+            {"dia": "Lunes", "hora_inicio": "13:00", "hora_fin": "14:00"},
+            {"dia": "Miércoles", "hora_inicio": "15:00", "hora_fin": "17:00"},
+        ],
+        "salones": ["11J", "13J"],
+        "cortes": [],
+        "es_extracurricular": False,
     },
 ]
 
@@ -86,8 +149,29 @@ SUBJECT_FALLBACK = {
     "nombre": None,
     "color_light": "#898781",
     "color_dark": "#898781",
-    "horario": "",
+    "horario": [],
 }
+
+
+def load_materias() -> list[dict]:
+    if not MATERIAS_FILE.exists():
+        materias = [dict(m) for m in DEFAULT_SUBJECTS]
+        save_materias(materias)
+        return materias
+    try:
+        return json.loads(MATERIAS_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return [dict(m) for m in DEFAULT_SUBJECTS]
+
+
+def save_materias(materias: list[dict]) -> None:
+    MATERIAS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    MATERIAS_FILE.write_text(json.dumps(materias, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def slugify(nombre: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", _normalize(nombre)).strip("-")
+    return slug or "materia"
 
 
 def _normalize(text: str) -> str:
@@ -95,11 +179,11 @@ def _normalize(text: str) -> str:
     return text.lower().strip()
 
 
-def resolve_subject(materia_text: Optional[str]) -> dict:
+def resolve_subject(materia_text: Optional[str], materias: Optional[list[dict]] = None) -> dict:
     if not materia_text:
         return {**SUBJECT_FALLBACK, "nombre": "Sin materia"}
     norm = _normalize(materia_text)
-    for subject in SUBJECTS:
+    for subject in materias if materias is not None else load_materias():
         if _normalize(subject["nombre"]) in norm or norm in _normalize(subject["nombre"]):
             return subject
         if subject["codigo"] and subject["codigo"].lower() in norm:
@@ -227,9 +311,103 @@ def api_status():
     }
 
 
+class HorarioBloque(BaseModel):
+    dia: str
+    hora_inicio: str
+    hora_fin: str
+
+
+class Corte(BaseModel):
+    id: str
+    nombre: str
+    tipo: str = "otro"  # parcial | laboratorio | actividad | otro
+    fecha_inicio: Optional[str] = None
+    fecha_fin: Optional[str] = None
+    peso: Optional[str] = None  # texto libre, ej. "30%" -- no es un campo validado
+
+
+class MateriaInput(BaseModel):
+    nombre: str
+    codigo: str = ""
+    nrc: str = ""
+    profesor: str = ""
+    color_light: str = "#898781"
+    color_dark: str = "#898781"
+    horario: list[HorarioBloque] = []
+    salones: list[str] = []
+    cortes: list[Corte] = []
+    es_extracurricular: bool = False
+
+
+class MateriaUpdate(BaseModel):
+    nombre: Optional[str] = None
+    codigo: Optional[str] = None
+    nrc: Optional[str] = None
+    profesor: Optional[str] = None
+    color_light: Optional[str] = None
+    color_dark: Optional[str] = None
+    horario: Optional[list[HorarioBloque]] = None
+    salones: Optional[list[str]] = None
+    cortes: Optional[list[Corte]] = None
+    es_extracurricular: Optional[bool] = None
+
+
+class NuevoSemestreInput(BaseModel):
+    etiqueta: Optional[str] = None
+
+
 @app.get("/api/materias")
 def api_materias():
-    return SUBJECTS
+    return load_materias()
+
+
+@app.post("/api/materias")
+def api_crear_materia(payload: MateriaInput):
+    materias = load_materias()
+    base_id = slugify(payload.nombre)
+    materia_id = base_id
+    existentes = {m["id"] for m in materias}
+    n = 2
+    while materia_id in existentes:
+        materia_id = f"{base_id}-{n}"
+        n += 1
+    nueva = {"id": materia_id, **payload.model_dump()}
+    materias.append(nueva)
+    save_materias(materias)
+    return nueva
+
+
+@app.put("/api/materias/{materia_id}")
+def api_editar_materia(materia_id: str, payload: MateriaUpdate):
+    materias = load_materias()
+    idx = next((i for i, m in enumerate(materias) if m["id"] == materia_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    cambios = {k: v for k, v in payload.model_dump().items() if v is not None}
+    materias[idx] = {**materias[idx], **cambios}
+    save_materias(materias)
+    return materias[idx]
+
+
+@app.delete("/api/materias/{materia_id}")
+def api_borrar_materia(materia_id: str):
+    materias = load_materias()
+    restantes = [m for m in materias if m["id"] != materia_id]
+    if len(restantes) == len(materias):
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    save_materias(restantes)
+    return {"ok": True}
+
+
+@app.post("/api/semestre/nuevo")
+def api_nuevo_semestre(payload: NuevoSemestreInput = NuevoSemestreInput()):
+    etiqueta = (payload.etiqueta or datetime.now().strftime("%Y-%m-%d")).strip()
+    archivado_como = None
+    if MATERIAS_FILE.exists():
+        archivado_como = f"materias_{etiqueta}.json"
+        MATERIAS_FILE.rename(DATA_DIR / archivado_como)
+    save_materias([])
+    return {"ok": True, "archivado_como": archivado_como}
 
 
 @app.get("/api/fichas")
@@ -264,53 +442,128 @@ def api_repaso():
     return {"disponible": True, "items": data}
 
 
-@app.get("/api/brightspace")
-def api_brightspace(materia: Optional[str] = None):
+DATE_ISO_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+# Brightspace (D2L) exports use PascalCase field names. studi-brightspace
+# writes richer per-materia folders (content.json = module tree, dropbox.json
+# = tareas/entregas) alongside older flat "<materia>.json" files that share
+# dropbox.json's shape. Parse both against their real schema instead of
+# guessing lowercase field names.
+
+
+def _normalize_modulo(item: dict) -> dict:
+    descripcion = item.get("Description") or {}
+    return {
+        "id": item.get("Id"),
+        "titulo": item.get("Title") or item.get("ShortTitle") or "Sin título",
+        "tipo": item.get("Type"),
+        "descripcion": descripcion.get("Text") or None,
+        "hijos": [_normalize_modulo(h) for h in (item.get("Structure") or [])],
+    }
+
+
+def _normalize_entrega(item: dict) -> Optional[dict]:
+    nombre = item.get("Name")
+    if not nombre:
+        return None
+    fecha = item.get("DueDate") or ""
+    match = DATE_ISO_PATTERN.search(fecha)
+    return {
+        "id": item.get("Id"),
+        "nombre": nombre,
+        "fecha_entrega": match.group(0) if match else None,
+        "archivos": [a["FileName"] for a in (item.get("Attachments") or []) if a.get("FileName")],
+    }
+
+
+def read_brightspace_materia(carpeta: Path) -> dict:
+    modulos: list[dict] = []
+    entregas: list[dict] = []
+
+    content_path = carpeta / "content.json"
+    if content_path.exists():
+        try:
+            data = json.loads(content_path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                modulos = [_normalize_modulo(m) for m in data]
+        except json.JSONDecodeError:
+            pass
+
+    dropbox_path = carpeta / "dropbox.json"
+    if dropbox_path.exists():
+        try:
+            data = json.loads(dropbox_path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                entregas = [e for e in (_normalize_entrega(i) for i in data) if e]
+        except json.JSONDecodeError:
+            pass
+
+    return {"modulos": modulos, "entregas": entregas}
+
+
+def list_brightspace(materias: Optional[list[dict]] = None) -> list[dict]:
+    materias = materias if materias is not None else load_materias()
     resultado = []
-    if BRIGHTSPACE_DIR.exists():
-        for path in sorted(BRIGHTSPACE_DIR.glob("*.json")):
-            try:
-                contenido = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                continue
-            nombre_materia = path.stem.replace("_", " ")
-            subject = resolve_subject(nombre_materia)
-            if materia and subject["id"] != materia:
-                continue
-            resultado.append({
-                "materia": nombre_materia,
-                "materia_id": subject["id"],
-                "archivo": path.name,
-                "actualizado": datetime.fromtimestamp(path.stat().st_mtime).isoformat(),
-                "contenido": contenido,
-            })
+    if not BRIGHTSPACE_DIR.exists():
+        return resultado
+
+    vistos = set()
+    for carpeta in sorted(p for p in BRIGHTSPACE_DIR.iterdir() if p.is_dir()):
+        nombre_materia = carpeta.name.replace("_", " ")
+        subject = resolve_subject(nombre_materia, materias)
+        datos = read_brightspace_materia(carpeta)
+        resultado.append({
+            "materia": nombre_materia,
+            "materia_id": subject["id"],
+            "color_light": subject["color_light"],
+            "color_dark": subject["color_dark"],
+            "modulos": datos["modulos"],
+            "entregas": datos["entregas"],
+            "actualizado": datetime.fromtimestamp(carpeta.stat().st_mtime).isoformat(),
+        })
+        vistos.add(carpeta.name)
+
+    # Compatibilidad con el formato viejo: un archivo suelto "<materia>.json"
+    # con la misma forma que dropbox.json, para materias que aun no tienen
+    # su carpeta con el export nuevo.
+    for path in sorted(BRIGHTSPACE_DIR.glob("*.json")):
+        if path.stem in vistos:
+            continue
+        try:
+            contenido = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        nombre_materia = path.stem.replace("_", " ")
+        subject = resolve_subject(nombre_materia, materias)
+        entregas = [e for e in (_normalize_entrega(i) for i in contenido) if e] if isinstance(contenido, list) else []
+        resultado.append({
+            "materia": nombre_materia,
+            "materia_id": subject["id"],
+            "color_light": subject["color_light"],
+            "color_dark": subject["color_dark"],
+            "modulos": [],
+            "entregas": entregas,
+            "actualizado": datetime.fromtimestamp(path.stat().st_mtime).isoformat(),
+        })
+
     return resultado
 
 
-DUE_KEY_PATTERN = re.compile(r"(fecha|due|entrega|vence|deadline)", re.IGNORECASE)
-DATE_ISO_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
-
-
-def _find_dates_in_json(node, found: list[tuple[str, str]], titulo_actual: str = ""):
-    """Best-effort walk of a Brightspace module tree looking for due dates."""
-    if isinstance(node, dict):
-        titulo = node.get("titulo") or node.get("title") or node.get("nombre") or titulo_actual
-        for key, value in node.items():
-            if isinstance(value, str) and DUE_KEY_PATTERN.search(key) and DATE_ISO_PATTERN.search(value):
-                found.append((titulo, DATE_ISO_PATTERN.search(value).group(0)))
-            else:
-                _find_dates_in_json(value, found, titulo)
-    elif isinstance(node, list):
-        for item in node:
-            _find_dates_in_json(item, found, titulo_actual)
+@app.get("/api/brightspace")
+def api_brightspace(materia: Optional[str] = None):
+    resultado = list_brightspace()
+    if materia:
+        resultado = [r for r in resultado if r["materia_id"] == materia]
+    return resultado
 
 
 @app.get("/api/calendario")
 def api_calendario():
     eventos = []
+    materias = load_materias()
 
     for ficha in list_fichas():
-        subject = next((s for s in SUBJECTS if s["id"] == ficha["materia_id"]), SUBJECT_FALLBACK)
+        subject = next((s for s in materias if s["id"] == ficha["materia_id"]), SUBJECT_FALLBACK)
         if ficha.get("fecha"):
             eventos.append({
                 "fecha": ficha["fecha"],
@@ -336,27 +589,20 @@ def api_calendario():
                 "origen": ficha["id"],
             })
 
-    if BRIGHTSPACE_DIR.exists():
-        for path in sorted(BRIGHTSPACE_DIR.glob("*.json")):
-            try:
-                contenido = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
+    for materia_data in list_brightspace(materias):
+        for entrega in materia_data["entregas"]:
+            if not entrega["fecha_entrega"]:
                 continue
-            nombre_materia = path.stem.replace("_", " ")
-            subject = resolve_subject(nombre_materia)
-            encontrados: list[tuple[str, str]] = []
-            _find_dates_in_json(contenido, encontrados)
-            for titulo, fecha_extra in encontrados:
-                eventos.append({
-                    "fecha": fecha_extra,
-                    "materia": nombre_materia,
-                    "materia_id": subject["id"],
-                    "color_light": subject["color_light"],
-                    "color_dark": subject["color_dark"],
-                    "tipo": "brightspace",
-                    "titulo": titulo or "Entrega Brightspace",
-                    "origen": path.stem,
-                })
+            eventos.append({
+                "fecha": entrega["fecha_entrega"],
+                "materia": materia_data["materia"],
+                "materia_id": materia_data["materia_id"],
+                "color_light": materia_data["color_light"],
+                "color_dark": materia_data["color_dark"],
+                "tipo": "brightspace",
+                "titulo": entrega["nombre"],
+                "origen": f"brightspace-{entrega['id']}",
+            })
 
     eventos.sort(key=lambda e: e["fecha"])
     return eventos
@@ -384,7 +630,7 @@ async def api_audio(file: UploadFile = File(...), materia: Optional[str] = Form(
 @app.post("/api/talleres/generar")
 async def api_generar_taller(materia_id: str = Form(...), temas: str = Form("")):
     TALLER_REQUESTS_DIR.mkdir(parents=True, exist_ok=True)
-    subject = next((s for s in SUBJECTS if s["id"] == materia_id), SUBJECT_FALLBACK)
+    subject = next((s for s in load_materias() if s["id"] == materia_id), SUBJECT_FALLBACK)
     timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     solicitud = {
         "materia_id": materia_id,
@@ -396,6 +642,123 @@ async def api_generar_taller(materia_id: str = Form(...), temas: str = Form(""))
     destino = TALLER_REQUESTS_DIR / f"{timestamp}_{materia_id}.json"
     destino.write_text(json.dumps(solicitud, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"ok": True, "solicitud": solicitud, "archivo": destino.name}
+
+
+def list_talleres_generados() -> list[dict]:
+    if not TALLER_GENERADOS_DIR.exists():
+        return []
+    talleres = []
+    for path in TALLER_GENERADOS_DIR.glob("*.json"):
+        try:
+            talleres.append(json.loads(path.read_text(encoding="utf-8")))
+        except json.JSONDecodeError:
+            continue
+    talleres.sort(key=lambda t: t.get("creado_en", ""), reverse=True)
+    return talleres
+
+
+@app.get("/api/talleres")
+def api_talleres():
+    return [
+        {
+            "id": t.get("id"),
+            "creado_en": t.get("creado_en"),
+            "tipo": t.get("tipo", "normal"),
+            "materias": t.get("materias", []),
+            "num_preguntas": len(t.get("preguntas", [])),
+        }
+        for t in list_talleres_generados()
+    ]
+
+
+@app.get("/api/talleres/{taller_id}")
+def api_taller_detalle(taller_id: str):
+    path = TALLER_GENERADOS_DIR / f"{taller_id}.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Taller no encontrado")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="Taller inválido")
+
+
+TALLER_SYSTEM_PROMPT = """Eres STUDI en modo tutor socrático, evaluando la respuesta de un \
+estudiante a una pregunta de estudio puntual.
+
+Reglas:
+- Nunca digas directamente si la respuesta es correcta o incorrecta.
+- Primero pregunta "¿Por qué crees eso?" o pide que profundice.
+- Si la respuesta es incompleta, da una pista mínima, nunca la respuesta completa.
+- Sé breve: máximo 3-4 líneas de feedback.
+- Responde siempre en español.
+- Termina SIEMPRE tu respuesta con una línea aparte, exactamente una de estas:
+  RESULTADO: domina
+  RESULTADO: parcial
+  RESULTADO: fallo
+  (domina = respuesta completa y correcta; parcial = a medio camino; fallo = \
+equivocada sin indicios de entender el tema)."""
+
+RESULTADO_PATTERN = re.compile(r"^RESULTADO:\s*(domina|parcial|fallo)\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+class RespuestaTallerInput(BaseModel):
+    numero: int
+    respuesta: str
+
+
+@app.post("/api/talleres/{taller_id}/responder")
+def api_taller_responder(taller_id: str, payload: RespuestaTallerInput):
+    path = TALLER_GENERADOS_DIR / f"{taller_id}.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Taller no encontrado")
+    taller = json.loads(path.read_text(encoding="utf-8"))
+    pregunta = next((p for p in taller.get("preguntas", []) if p.get("numero") == payload.numero), None)
+    if not pregunta:
+        raise HTTPException(status_code=404, detail="Pregunta no encontrada en el taller")
+
+    mensaje_usuario = (
+        f"Pregunta ({pregunta.get('materia')}): {pregunta.get('pregunta')}\n\n"
+        f"Respuesta del estudiante: {payload.respuesta}"
+    )
+    body = json.dumps({
+        "model": OLLAMA_MODEL,
+        "messages": [
+            {"role": "system", "content": TALLER_SYSTEM_PROMPT},
+            {"role": "user", "content": mensaje_usuario},
+        ],
+        "stream": False,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{OLLAMA_URL}/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as res:
+            data = json.loads(res.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise HTTPException(status_code=502, detail=f"No se pudo conectar con el modelo de IA: {exc}")
+
+    contenido = data.get("message", {}).get("content", "")
+    match = RESULTADO_PATTERN.search(contenido)
+    resultado = match.group(1).lower() if match else None
+    feedback = RESULTADO_PATTERN.sub("", contenido).strip()
+
+    if resultado and pregunta.get("tema") and REGISTRAR_DESEMPENO_SCRIPT.exists():
+        subprocess.run(
+            [
+                "python3", str(REGISTRAR_DESEMPENO_SCRIPT),
+                "--materia", pregunta["materia_id"],
+                "--tema", pregunta["tema"],
+                "--resultado", resultado,
+            ],
+            capture_output=True,
+            timeout=10,
+        )
+
+    return {"feedback": feedback, "resultado": resultado}
 
 
 # ---------------------------------------------------------------------------
