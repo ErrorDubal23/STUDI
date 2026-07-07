@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { api } from "../lib/api.js";
 import { useMaterias } from "../lib/MateriasContext.jsx";
 import { SubjectDot, Card, StateMessage } from "./ui.jsx";
 import { IconChevron, IconTrash, IconPlus } from "./Icons.jsx";
@@ -28,7 +29,45 @@ function vacia() {
   };
 }
 
-function MateriaForm({ inicial, onGuardar, onCancelar, onBorrar, guardando }) {
+function GenerarDescargableBoton({ materiaId, corte }) {
+  const [estado, setEstado] = useState("idle"); // idle | generando | listo | error
+  const [mensaje, setMensaje] = useState(null);
+  const listoParaGenerar = Boolean(corte.fecha_inicio && corte.fecha_fin);
+
+  async function generar() {
+    setEstado("generando");
+    setMensaje(null);
+    try {
+      await api.generarTallerDescargable(materiaId, corte.id);
+      setEstado("listo");
+      setMensaje("Listo — búscalo en la pestaña Talleres.");
+    } catch (err) {
+      setEstado("error");
+      setMensaje(err.message);
+    }
+  }
+
+  return (
+    <div className="mt-1">
+      <button
+        type="button"
+        disabled={estado === "generando" || !listoParaGenerar}
+        onClick={generar}
+        className="rounded-full border border-hairline px-3 py-1.5 text-[12px] text-ink-secondary disabled:opacity-50 dark:border-hairline-dark dark:text-ink-dark-secondary"
+      >
+        {estado === "generando" ? "Generando…" : "Generar taller descargable"}
+      </button>
+      {!listoParaGenerar && (
+        <p className="mt-1 text-[11px] text-ink-muted">Necesita fecha de inicio y fin para saber qué temas incluir.</p>
+      )}
+      {mensaje && (
+        <p className={`mt-1 text-[11px] ${estado === "error" ? "text-[#d03b3b]" : "text-[#0ca30c]"}`}>{mensaje}</p>
+      )}
+    </div>
+  );
+}
+
+function MateriaForm({ materiaId, inicial, onGuardar, onCancelar, onBorrar, guardando }) {
   const [form, setForm] = useState(inicial);
 
   function set(campo, valor) {
@@ -154,6 +193,7 @@ function MateriaForm({ inicial, onGuardar, onCancelar, onBorrar, guardando }) {
                   <input type="date" className={inputClass} value={corte.fecha_inicio || ""} onChange={(e) => editarCorte(idx, "fecha_inicio", e.target.value)} />
                   <input type="date" className={inputClass} value={corte.fecha_fin || ""} onChange={(e) => editarCorte(idx, "fecha_fin", e.target.value)} />
                 </div>
+                {materiaId && <GenerarDescargableBoton materiaId={materiaId} corte={corte} />}
               </div>
             ))}
             {form.cortes.length === 0 && <p className="text-[12px] text-ink-muted">Sin cortes definidos todavía.</p>}
@@ -305,6 +345,7 @@ export default function Materias() {
             </button>
             {abierta === materia.id && (
               <MateriaForm
+                materiaId={materia.id}
                 inicial={{
                   nombre: materia.nombre,
                   codigo: materia.codigo,
@@ -349,6 +390,7 @@ export default function Materias() {
                 </button>
                 {abierta === materia.id && (
                   <MateriaForm
+                    materiaId={materia.id}
                     inicial={{
                       nombre: materia.nombre,
                       codigo: materia.codigo,

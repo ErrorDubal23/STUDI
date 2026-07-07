@@ -52,7 +52,7 @@ export default function App() {
     <MateriasProvider>
       <div className="flex min-h-screen flex-col bg-plane text-ink dark:bg-plane-dark dark:text-ink-dark">
         <header
-          className="sticky top-0 z-10 border-b border-hairline bg-plane/90 backdrop-blur-sm dark:border-hairline-dark dark:bg-plane-dark/90"
+          className="sticky top-0 z-10 border-b border-hairline bg-plane/90 backdrop-blur-sm dark:border-hairline-dark dark:bg-plane-dark/90 print:hidden"
           style={{ paddingTop: "env(safe-area-inset-top)" }}
         >
           <div className="flex items-center justify-between px-5 py-3">
@@ -96,7 +96,7 @@ export default function App() {
         )}
 
         <nav
-          className="fixed inset-x-0 bottom-0 z-10 border-t border-hairline bg-surface/95 backdrop-blur-sm dark:border-hairline-dark dark:bg-surface-dark/95"
+          className="fixed inset-x-0 bottom-0 z-10 border-t border-hairline bg-surface/95 backdrop-blur-sm dark:border-hairline-dark dark:bg-surface-dark/95 print:hidden"
           style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
         >
           <ul className="mx-auto flex max-w-lg items-stretch justify-between px-1">

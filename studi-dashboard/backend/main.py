@@ -665,7 +665,7 @@ def api_talleres():
             "creado_en": t.get("creado_en"),
             "tipo": t.get("tipo", "normal"),
             "materias": t.get("materias", []),
-            "num_preguntas": len(t.get("preguntas", [])),
+            "num_items": len(t.get("preguntas") or t.get("ejercicios") or []),
         }
         for t in list_talleres_generados()
     ]
@@ -759,6 +759,118 @@ def api_taller_responder(taller_id: str, payload: RespuestaTallerInput):
         )
 
     return {"feedback": feedback, "resultado": resultado}
+
+
+TALLER_DESCARGABLE_SYSTEM_PROMPT = """Eres STUDI generando un taller de práctica para preparación de parcial.
+
+Genera entre 6 y 10 ejercicios PRÁCTICOS (problemas concretos a resolver, \
+nunca preguntas conceptuales abiertas tipo "explica qué es X") sobre los \
+temas indicados, de dificultad media-alta a alta.
+
+Reglas:
+- Cada ejercicio debe tener datos o un enunciado específico para resolver,
+  no una pregunta de opinión o de definición.
+- Si el tema es matemático o lógico, usa notación LaTeX con delimitadores
+  $...$ para inline y $$...$$ para bloques.
+- Ordena de menor a mayor dificultad.
+- Responde ÚNICAMENTE con JSON válido, sin texto antes ni después, con
+  este formato exacto:
+  {"ejercicios": [{"numero": 1, "tema": "<tema breve>", "enunciado": "<texto del ejercicio>"}]}
+- Escribe todo en español."""
+
+
+def _extraer_json(texto: str) -> dict:
+    texto = texto.strip()
+    texto = re.sub(r"^```(?:json)?\n?", "", texto)
+    texto = re.sub(r"\n?```$", "", texto)
+    return json.loads(texto)
+
+
+class GenerarDescargableInput(BaseModel):
+    materia_id: str
+    corte_id: Optional[str] = None
+    temas: Optional[list[str]] = None
+
+
+@app.post("/api/talleres/generar-descargable")
+def api_generar_taller_descargable(payload: GenerarDescargableInput):
+    materias = load_materias()
+    materia = next((m for m in materias if m["id"] == payload.materia_id), None)
+    if not materia:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+
+    temas = list(payload.temas or [])
+    if payload.corte_id:
+        corte = next((c for c in (materia.get("cortes") or []) if c["id"] == payload.corte_id), None)
+        if not corte:
+            raise HTTPException(status_code=404, detail="Corte no encontrado")
+        if corte.get("fecha_inicio") and corte.get("fecha_fin"):
+            for ficha in list_fichas():
+                if (
+                    ficha["materia_id"] == payload.materia_id
+                    and ficha.get("fecha")
+                    and corte["fecha_inicio"] <= ficha["fecha"] <= corte["fecha_fin"]
+                ):
+                    temas.extend(ficha.get("temas", []))
+        temas = list(dict.fromkeys(temas))
+
+    if not temas:
+        raise HTTPException(
+            status_code=400,
+            detail="No hay temas para generar el taller (revisa las fechas del corte o agrega fichas de clase)",
+        )
+
+    mensaje_usuario = f"Materia: {materia['nombre']}\nTemas a cubrir: {', '.join(temas)}"
+    body = json.dumps({
+        "model": OLLAMA_MODEL,
+        "messages": [
+            {"role": "system", "content": TALLER_DESCARGABLE_SYSTEM_PROMPT},
+            {"role": "user", "content": mensaje_usuario},
+        ],
+        "stream": False,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"{OLLAMA_URL}/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=90) as res:
+            data = json.loads(res.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise HTTPException(status_code=502, detail=f"No se pudo conectar con el modelo de IA: {exc}")
+
+    contenido = data.get("message", {}).get("content", "")
+    try:
+        ejercicios = _extraer_json(contenido)["ejercicios"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        raise HTTPException(status_code=502, detail="El modelo no devolvió un taller válido, intenta de nuevo")
+
+    timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    taller_id = f"{timestamp}_{payload.materia_id}-descargable"
+    taller = {
+        "id": taller_id,
+        "creado_en": datetime.now().isoformat(),
+        "tipo": "descargable",
+        "materias": [payload.materia_id],
+        "materia_nombre": materia["nombre"],
+        "corte_id": payload.corte_id,
+        "temas": temas,
+        "ejercicios": [
+            {
+                "numero": e.get("numero", i + 1),
+                "tema": e.get("tema", ""),
+                "enunciado": e.get("enunciado", ""),
+            }
+            for i, e in enumerate(ejercicios)
+        ],
+    }
+    TALLER_GENERADOS_DIR.mkdir(parents=True, exist_ok=True)
+    (TALLER_GENERADOS_DIR / f"{taller_id}.json").write_text(
+        json.dumps(taller, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return taller
 
 
 # ---------------------------------------------------------------------------

@@ -70,4 +70,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ numero, respuesta }),
     }),
+  generarTallerDescargable: (materiaId, corteId) =>
+    requestJSON("/talleres/generar-descargable", {
+      method: "POST",
+      body: JSON.stringify({ materia_id: materiaId, corte_id: corteId }),
+    }),
 };

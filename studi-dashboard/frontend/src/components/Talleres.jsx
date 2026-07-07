@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { api } from "../lib/api.js";
-import { SubjectDot, StateMessage, Card } from "./ui.jsx";
+import { useMaterias } from "../lib/MateriasContext.jsx";
+import { SubjectDot, SubjectChip, StateMessage, Card } from "./ui.jsx";
 import { IconChevron } from "./Icons.jsx";
 
 const KATEX_OPTIONS = { throwOnError: false, strict: false };
@@ -66,8 +67,8 @@ function Pregunta({ tallerId, pregunta }) {
   const badge = resultado?.resultado ? BADGES[resultado.resultado] : null;
 
   return (
-    <Card className="flex flex-col gap-2.5">
-      <div className="flex items-center gap-1.5 text-[11px] text-ink-muted">
+    <Card className="flex flex-col gap-2.5 print:break-inside-avoid print:border-0 print:shadow-none">
+      <div className="flex items-center gap-1.5 text-[11px] text-ink-muted print:hidden">
         <SubjectDot materiaId={pregunta.materia_id} className="h-2 w-2" />
         {pregunta.materia}
       </div>
@@ -79,22 +80,22 @@ function Pregunta({ tallerId, pregunta }) {
         onChange={(e) => setTexto(e.target.value)}
         placeholder="Escribe tu respuesta…"
         rows={2}
-        className="w-full resize-none rounded-xl border border-hairline bg-transparent px-3 py-2 text-[13px] dark:border-hairline-dark dark:text-ink-dark"
+        className="w-full resize-none rounded-xl border border-hairline bg-transparent px-3 py-2 text-[13px] dark:border-hairline-dark dark:text-ink-dark print:hidden"
       />
 
       <button
         type="button"
         disabled={enviando || !texto.trim()}
         onClick={responder}
-        className="self-end rounded-full bg-ink px-4 py-1.5 text-[12px] font-medium text-white disabled:opacity-50 dark:bg-ink-dark dark:text-plane-dark"
+        className="self-end rounded-full bg-ink px-4 py-1.5 text-[12px] font-medium text-white disabled:opacity-50 dark:bg-ink-dark dark:text-plane-dark print:hidden"
       >
         {enviando ? "Pensando…" : resultado ? "Responder de nuevo" : "Responder"}
       </button>
 
-      {error && <p className="text-[12px] text-[#d03b3b]">{error}</p>}
+      {error && <p className="text-[12px] text-[#d03b3b] print:hidden">{error}</p>}
 
       {resultado && (
-        <div className="rounded-xl bg-hairline px-3 py-2.5 dark:bg-hairline-dark">
+        <div className="rounded-xl bg-hairline px-3 py-2.5 dark:bg-hairline-dark print:hidden">
           {badge && (
             <span
               className="mb-1.5 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium text-white"
@@ -107,6 +108,46 @@ function Pregunta({ tallerId, pregunta }) {
         </div>
       )}
     </Card>
+  );
+}
+
+function Ejercicio({ ejercicio }) {
+  return (
+    <Card className="flex flex-col gap-2 print:break-inside-avoid print:border-0 print:shadow-none">
+      {ejercicio.tema && <p className="text-[11px] uppercase tracking-wide text-ink-muted">{ejercicio.tema}</p>}
+      <Markdown>{`${ejercicio.numero}. ${ejercicio.enunciado}`}</Markdown>
+      <div className="mt-2 h-16 border-b border-dashed border-hairline dark:border-hairline-dark print:h-24" />
+    </Card>
+  );
+}
+
+function TallerDescargable({ taller }) {
+  const materia = useMaterias().materias.find((m) => m.id === taller.materias[0]);
+  return (
+    <div>
+      <div className="mb-4 flex items-center justify-between print:hidden">
+        <div>
+          <p className="text-[14px] font-medium">{taller.materia_nombre || materia?.nombre}</p>
+          <p className="text-[12px] text-ink-muted">{(taller.temas || []).join(", ")}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => window.print()}
+          className="rounded-full bg-ink px-4 py-2 text-[13px] font-medium text-white dark:bg-ink-dark dark:text-plane-dark"
+        >
+          Descargar PDF
+        </button>
+      </div>
+      <div className="mb-4 hidden print:block">
+        <h1 className="text-lg font-semibold">{taller.materia_nombre || materia?.nombre} — Taller de práctica</h1>
+        <p className="text-sm text-ink-muted">{(taller.temas || []).join(", ")}</p>
+      </div>
+      <div className="flex flex-col gap-3">
+        {taller.ejercicios.map((e) => (
+          <Ejercicio key={e.numero} ejercicio={e} />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -123,12 +164,13 @@ function TallerDetalle({ id, onVolver }) {
 
   return (
     <div>
-      <button type="button" onClick={onVolver} className="mb-3 flex items-center gap-1 text-[13px] text-ink-secondary dark:text-ink-dark-secondary">
+      <button type="button" onClick={onVolver} className="mb-3 flex items-center gap-1 text-[13px] text-ink-secondary dark:text-ink-dark-secondary print:hidden">
         <IconChevron className="h-4 w-4 rotate-180" /> Todos los talleres
       </button>
       {error && <StateMessage>{error}</StateMessage>}
       {!taller && !error && <StateMessage>Cargando taller…</StateMessage>}
-      {taller && (
+      {taller && taller.tipo === "descargable" && <TallerDescargable taller={taller} />}
+      {taller && taller.tipo !== "descargable" && (
         <div className="flex flex-col gap-3">
           {taller.preguntas.map((p) => (
             <Pregunta key={p.numero} tallerId={id} pregunta={p} />
@@ -140,9 +182,11 @@ function TallerDetalle({ id, onVolver }) {
 }
 
 export default function Talleres() {
+  const { materias } = useMaterias();
   const [talleres, setTalleres] = useState(null);
   const [error, setError] = useState(null);
   const [abierto, setAbierto] = useState(null);
+  const [filtro, setFiltro] = useState(null);
 
   useEffect(() => {
     api
@@ -151,6 +195,17 @@ export default function Talleres() {
       .catch((err) => setError(err.message));
   }, []);
 
+  const materiasConTalleres = useMemo(() => {
+    if (!talleres) return [];
+    const ids = new Set(talleres.flatMap((t) => t.materias));
+    return materias.filter((m) => ids.has(m.id));
+  }, [talleres, materias]);
+
+  const visibles = useMemo(() => {
+    if (!talleres) return [];
+    return filtro ? talleres.filter((t) => t.materias.includes(filtro)) : talleres;
+  }, [talleres, filtro]);
+
   if (abierto) return <TallerDetalle id={abierto} onVolver={() => setAbierto(null)} />;
 
   if (error) return <StateMessage>{error}</StateMessage>;
@@ -158,25 +213,36 @@ export default function Talleres() {
   if (talleres.length === 0) return <StateMessage>Todavía no hay talleres generados.</StateMessage>;
 
   return (
-    <div className="flex flex-col gap-2.5">
-      {talleres.map((t) => (
-        <Card key={t.id} className="p-0">
-          <button type="button" onClick={() => setAbierto(t.id)} className="flex w-full items-center justify-between gap-3 p-4 text-left">
-            <div className="flex min-w-0 flex-col gap-1">
-              <div className="flex items-center gap-1.5">
-                {t.materias.map((m) => (
-                  <SubjectDot key={m} materiaId={m} />
-                ))}
-                <span className="text-[13px] font-medium">
-                  {t.tipo === "acumulado" ? "Taller acumulado" : "Taller"} · {t.num_preguntas} preguntas
-                </span>
+    <div>
+      <div className="-mx-4 mb-3 flex gap-2 overflow-x-auto px-4 pb-1">
+        <SubjectChip label="Todas" active={filtro === null} onClick={() => setFiltro(null)} materiaId={materiasConTalleres[0]?.id} />
+        {materiasConTalleres.map((m) => (
+          <SubjectChip key={m.id} materiaId={m.id} active={filtro === m.id} onClick={() => setFiltro(m.id)} />
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-2.5">
+        {visibles.map((t) => (
+          <Card key={t.id} className="p-0">
+            <button type="button" onClick={() => setAbierto(t.id)} className="flex w-full items-center justify-between gap-3 p-4 text-left">
+              <div className="flex min-w-0 flex-col gap-1">
+                <div className="flex items-center gap-1.5">
+                  {t.materias.map((m) => (
+                    <SubjectDot key={m} materiaId={m} />
+                  ))}
+                  <span className="text-[13px] font-medium">
+                    {t.tipo === "descargable" ? "Taller descargable" : t.tipo === "acumulado" ? "Taller acumulado" : "Taller"} ·{" "}
+                    {t.num_items} {t.tipo === "descargable" ? "ejercicios" : "preguntas"}
+                  </span>
+                </div>
+                <span className="text-[12px] text-ink-muted">{formatFechaHora(t.creado_en)}</span>
               </div>
-              <span className="text-[12px] text-ink-muted">{formatFechaHora(t.creado_en)}</span>
-            </div>
-            <IconChevron className="h-4 w-4 shrink-0 text-ink-muted" />
-          </button>
-        </Card>
-      ))}
+              <IconChevron className="h-4 w-4 shrink-0 text-ink-muted" />
+            </button>
+          </Card>
+        ))}
+        {visibles.length === 0 && <StateMessage>No hay talleres de esta materia.</StateMessage>}
+      </div>
     </div>
   );
 }
