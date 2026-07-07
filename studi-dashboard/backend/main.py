@@ -226,6 +226,16 @@ def parse_ficha(raw_text: str) -> dict:
 
     current_field = None
     for line in lines:
+        # A blank line or a Markdown heading always closes whatever "Campo:"
+        # field was open -- otherwise a LIST_FIELDS field (e.g. "Temas:")
+        # keeps swallowing every following line, including headings and
+        # bullet points, as if they were more list items.
+        if not line.strip() or line.lstrip().startswith("#"):
+            current_field = None
+            if line.strip():
+                body_lines.append(line.strip())
+            continue
+
         match = re.match(r"^([A-Za-zÁÉÍÓÚÑáéíóúñ ]+):\s?(.*)$", line)
         key = match.group(1).strip().lower() if match else None
         alias = FIELD_ALIASES.get(key) if key else None
@@ -236,13 +246,13 @@ def parse_ficha(raw_text: str) -> dict:
                 fields[alias] = _split_list_value(value) if value else []
             else:
                 fields[alias] = value
-        elif current_field and line.strip():
+        elif current_field:
             # Continuation of a multi-line field (e.g. a long "Resumen:").
             if current_field in LIST_FIELDS:
                 fields[current_field].extend(_split_list_value(line))
             else:
                 fields[current_field] = (fields.get(current_field, "") + " " + line.strip()).strip()
-        elif line.strip():
+        else:
             body_lines.append(line.strip())
 
     fechas_detectadas = sorted(set(m.group(0) for m in DATE_PATTERN.finditer(raw_text)))

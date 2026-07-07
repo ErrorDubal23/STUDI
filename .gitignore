@@ -12,6 +12,11 @@ dist/
 .vscode/
 .idea/
 
+# Local AI agent skills/tooling (machine-specific, not app code)
+.agents/
+.claude/
+skills-lock.json
+
 # Env / secrets
 .env
 .env.*
