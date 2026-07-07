@@ -246,6 +246,12 @@ def parse_ficha(raw_text: str) -> dict:
                 fields[alias] = _split_list_value(value) if value else []
             else:
                 fields[alias] = value
+        elif match:
+            # Looks like a "Campo: valor" line but for a field we don't
+            # track (e.g. "Tarea:") -- still ends whatever field was open,
+            # so its value doesn't get swallowed as more items of the
+            # previous field.
+            current_field = None
         elif current_field:
             # Continuation of a multi-line field (e.g. a long "Resumen:").
             if current_field in LIST_FIELDS:
