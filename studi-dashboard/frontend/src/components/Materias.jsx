@@ -1,8 +1,10 @@
+import { motion } from "framer-motion";
 import { useState } from "react";
 import { api } from "../lib/api.js";
 import { useMaterias } from "../lib/MateriasContext.jsx";
-import { SubjectDot, Card, StateMessage } from "./ui.jsx";
-import { IconChevron, IconTrash, IconPlus } from "./Icons.jsx";
+import { TAP_PRESS } from "../lib/motion.js";
+import { SubjectDot, Card, Accordion, StateMessage } from "./ui.jsx";
+import { IconTrash, IconPlus } from "./Icons.jsx";
 
 const DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const TIPOS_CORTE = [
@@ -49,14 +51,15 @@ function GenerarDescargableBoton({ materiaId, corte }) {
 
   return (
     <div className="mt-1">
-      <button
+      <motion.button
         type="button"
+        whileTap={estado === "generando" || !listoParaGenerar ? undefined : TAP_PRESS}
         disabled={estado === "generando" || !listoParaGenerar}
         onClick={generar}
         className="rounded-full border border-hairline px-3 py-1.5 text-[12px] text-ink-secondary disabled:opacity-50 dark:border-hairline-dark dark:text-ink-dark-secondary"
       >
         {estado === "generando" ? "Generando…" : "Generar taller descargable"}
-      </button>
+      </motion.button>
       {!listoParaGenerar && (
         <p className="mt-1 text-[11px] text-ink-muted">Necesita fecha de inicio y fin para saber qué temas incluir.</p>
       )}
@@ -100,7 +103,7 @@ function MateriaForm({ materiaId, inicial, onGuardar, onCancelar, onBorrar, guar
   }
 
   return (
-    <div className="flex flex-col gap-4 border-t border-hairline px-4 py-4 dark:border-hairline-dark">
+    <div className="flex flex-col gap-4">
       <label className="flex flex-col gap-1 text-[12px] text-ink-muted">
         Nombre *
         <input className={inputClass} value={form.nombre} onChange={(e) => set("nombre", e.target.value)} placeholder="Ej. Algoritmos y Complejidad" />
@@ -140,10 +143,10 @@ function MateriaForm({ materiaId, inicial, onGuardar, onCancelar, onBorrar, guar
 
       <div>
         <div className="mb-2 flex items-center justify-between">
-          <span className="text-[12px] uppercase tracking-wide text-ink-muted">Horario</span>
-          <button type="button" onClick={agregarHorario} className="flex items-center gap-1 text-[12px] text-ink-secondary dark:text-ink-dark-secondary">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-ink-muted">Horario</span>
+          <motion.button type="button" whileTap={TAP_PRESS} onClick={agregarHorario} className="flex items-center gap-1 text-[12px] text-ink-secondary dark:text-ink-dark-secondary">
             <IconPlus className="h-3.5 w-3.5" /> Agregar bloque
-          </button>
+          </motion.button>
         </div>
         <div className="flex flex-col gap-2">
           {form.horario.map((bloque, idx) => (
@@ -155,9 +158,9 @@ function MateriaForm({ materiaId, inicial, onGuardar, onCancelar, onBorrar, guar
               </select>
               <input type="time" className={inputClass} value={bloque.hora_inicio} onChange={(e) => editarHorario(idx, "hora_inicio", e.target.value)} />
               <input type="time" className={inputClass} value={bloque.hora_fin} onChange={(e) => editarHorario(idx, "hora_fin", e.target.value)} />
-              <button type="button" onClick={() => quitarHorario(idx)} className="shrink-0 text-ink-muted">
+              <motion.button type="button" whileTap={TAP_PRESS} onClick={() => quitarHorario(idx)} className="shrink-0 text-ink-muted">
                 <IconTrash className="h-4 w-4" />
-              </button>
+              </motion.button>
             </div>
           ))}
           {form.horario.length === 0 && <p className="text-[12px] text-ink-muted">Sin bloques de horario todavía.</p>}
@@ -167,19 +170,19 @@ function MateriaForm({ materiaId, inicial, onGuardar, onCancelar, onBorrar, guar
       {!form.es_extracurricular && (
         <div>
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-[12px] uppercase tracking-wide text-ink-muted">Cortes</span>
-            <button type="button" onClick={agregarCorte} className="flex items-center gap-1 text-[12px] text-ink-secondary dark:text-ink-dark-secondary">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-ink-muted">Cortes</span>
+            <motion.button type="button" whileTap={TAP_PRESS} onClick={agregarCorte} className="flex items-center gap-1 text-[12px] text-ink-secondary dark:text-ink-dark-secondary">
               <IconPlus className="h-3.5 w-3.5" /> Agregar corte
-            </button>
+            </motion.button>
           </div>
           <div className="flex flex-col gap-3">
             {form.cortes.map((corte, idx) => (
               <div key={corte.id} className="flex flex-col gap-2 rounded-xl border border-hairline p-3 dark:border-hairline-dark">
                 <div className="flex items-center gap-2">
                   <input className={inputClass} value={corte.nombre} onChange={(e) => editarCorte(idx, "nombre", e.target.value)} placeholder="Nombre del corte" />
-                  <button type="button" onClick={() => quitarCorte(idx)} className="shrink-0 text-ink-muted">
+                  <motion.button type="button" whileTap={TAP_PRESS} onClick={() => quitarCorte(idx)} className="shrink-0 text-ink-muted">
                     <IconTrash className="h-4 w-4" />
-                  </button>
+                  </motion.button>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <select className={inputClass} value={corte.tipo} onChange={(e) => editarCorte(idx, "tipo", e.target.value)}>
@@ -203,24 +206,25 @@ function MateriaForm({ materiaId, inicial, onGuardar, onCancelar, onBorrar, guar
 
       <div className="flex items-center justify-between pt-1">
         {onBorrar ? (
-          <button type="button" onClick={onBorrar} className="text-[13px] text-[#d03b3b]">
+          <motion.button type="button" whileTap={TAP_PRESS} onClick={onBorrar} className="text-[13px] text-[#d03b3b]">
             Borrar materia
-          </button>
+          </motion.button>
         ) : (
           <span />
         )}
         <div className="flex gap-2">
-          <button type="button" onClick={onCancelar} className="rounded-full border border-hairline px-4 py-2 text-[13px] text-ink-secondary dark:border-hairline-dark dark:text-ink-dark-secondary">
+          <motion.button type="button" whileTap={TAP_PRESS} onClick={onCancelar} className="rounded-full border border-hairline px-4 py-2 text-[13px] text-ink-secondary dark:border-hairline-dark dark:text-ink-dark-secondary">
             Cancelar
-          </button>
-          <button
+          </motion.button>
+          <motion.button
             type="button"
+            whileTap={guardando || !form.nombre.trim() ? undefined : TAP_PRESS}
             disabled={guardando || !form.nombre.trim()}
             onClick={() => onGuardar(form)}
             className="rounded-full bg-ink px-4 py-2 text-[13px] font-medium text-white disabled:opacity-60 dark:bg-ink-dark dark:text-plane-dark"
           >
             {guardando ? "Guardando…" : "Guardar"}
-          </button>
+          </motion.button>
         </div>
       </div>
     </div>
@@ -230,6 +234,47 @@ function MateriaForm({ materiaId, inicial, onGuardar, onCancelar, onBorrar, guar
 function resumenHorario(horario) {
   if (!horario || horario.length === 0) return "Sin horario";
   return horario.map((h) => `${h.dia} ${h.hora_inicio}-${h.hora_fin}`).join(" · ");
+}
+
+function MateriaItem({ materia, abierta, onToggle, guardando, onGuardar, onCancelar, onBorrar }) {
+  return (
+    <Accordion
+      open={abierta}
+      onToggle={onToggle}
+      accentColor={materia.colorLight}
+      header={
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <div className="flex items-center gap-2 text-[14px] font-semibold">
+            <SubjectDot materiaId={materia.id} />
+            {materia.nombre}
+          </div>
+          <span className="text-[12px] text-ink-muted">
+            {[materia.codigo, materia.nrc, materia.profesor].filter(Boolean).join(" · ") || "Sin datos adicionales"}
+          </span>
+          <span className="text-[12px] text-ink-muted">{resumenHorario(materia.horario)}</span>
+        </div>
+      }
+    >
+      <MateriaForm
+        materiaId={materia.id}
+        inicial={{
+          nombre: materia.nombre,
+          codigo: materia.codigo,
+          nrc: materia.nrc,
+          profesor: materia.profesor,
+          color_light: materia.colorLight,
+          color_dark: materia.colorDark,
+          horario: materia.horario,
+          cortes: materia.cortes,
+          es_extracurricular: materia.esExtracurricular,
+        }}
+        guardando={guardando}
+        onGuardar={onGuardar}
+        onCancelar={onCancelar}
+        onBorrar={onBorrar}
+      />
+    </Accordion>
+  );
 }
 
 export default function Materias() {
@@ -284,20 +329,22 @@ export default function Materias() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <button
+        <motion.button
           type="button"
+          whileTap={TAP_PRESS}
           onClick={() => setAbierta("__nueva__")}
           className="flex items-center gap-1.5 rounded-full bg-ink px-4 py-2 text-[13px] font-medium text-white dark:bg-ink-dark dark:text-plane-dark"
         >
           <IconPlus className="h-4 w-4" /> Agregar materia
-        </button>
-        <button
+        </motion.button>
+        <motion.button
           type="button"
+          whileTap={TAP_PRESS}
           onClick={() => setAvisoSemestre(true)}
           className="rounded-full border border-hairline px-4 py-2 text-[13px] text-ink-secondary dark:border-hairline-dark dark:text-ink-dark-secondary"
         >
           Nuevo semestre
-        </button>
+        </motion.button>
       </div>
 
       {avisoSemestre && (
@@ -307,108 +354,53 @@ export default function Materias() {
             tocan.
           </p>
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => setAvisoSemestre(false)} className="rounded-full border border-hairline px-3 py-1.5 text-[12px] dark:border-hairline-dark">
+            <motion.button type="button" whileTap={TAP_PRESS} onClick={() => setAvisoSemestre(false)} className="rounded-full border border-hairline px-3 py-1.5 text-[12px] dark:border-hairline-dark">
               Cancelar
-            </button>
-            <button type="button" onClick={handleNuevoSemestre} className="rounded-full bg-[#d03b3b] px-3 py-1.5 text-[12px] font-medium text-white">
+            </motion.button>
+            <motion.button type="button" whileTap={TAP_PRESS} onClick={handleNuevoSemestre} className="rounded-full bg-[#d03b3b] px-3 py-1.5 text-[12px] font-medium text-white">
               Confirmar
-            </button>
+            </motion.button>
           </div>
         </Card>
       )}
 
       {abierta === "__nueva__" && (
-        <Card className="p-0">
+        <Card>
           <MateriaForm inicial={vacia()} guardando={guardando} onGuardar={handleGuardarNueva} onCancelar={() => setAbierta(null)} />
         </Card>
       )}
 
       <div className="flex flex-col gap-2.5">
         {regulares.map((materia) => (
-          <Card key={materia.id} className="p-0">
-            <button
-              type="button"
-              onClick={() => setAbierta(abierta === materia.id ? null : materia.id)}
-              className="flex w-full items-center justify-between gap-3 p-4 text-left"
-            >
-              <div className="flex min-w-0 flex-col gap-0.5">
-                <div className="flex items-center gap-2 text-[14px] font-medium">
-                  <SubjectDot materiaId={materia.id} />
-                  {materia.nombre}
-                </div>
-                <span className="text-[12px] text-ink-muted">
-                  {[materia.codigo, materia.nrc, materia.profesor].filter(Boolean).join(" · ") || "Sin datos adicionales"}
-                </span>
-                <span className="text-[12px] text-ink-muted">{resumenHorario(materia.horario)}</span>
-              </div>
-              <IconChevron className={`h-4 w-4 shrink-0 text-ink-muted transition-transform ${abierta === materia.id ? "rotate-90" : ""}`} />
-            </button>
-            {abierta === materia.id && (
-              <MateriaForm
-                materiaId={materia.id}
-                inicial={{
-                  nombre: materia.nombre,
-                  codigo: materia.codigo,
-                  nrc: materia.nrc,
-                  profesor: materia.profesor,
-                  color_light: materia.colorLight,
-                  color_dark: materia.colorDark,
-                  horario: materia.horario,
-                  cortes: materia.cortes,
-                  es_extracurricular: materia.esExtracurricular,
-                }}
-                guardando={guardando}
-                onGuardar={(form) => handleGuardarEdicion(materia.id, form)}
-                onCancelar={() => setAbierta(null)}
-                onBorrar={() => handleBorrar(materia.id)}
-              />
-            )}
-          </Card>
+          <MateriaItem
+            key={materia.id}
+            materia={materia}
+            abierta={abierta === materia.id}
+            onToggle={() => setAbierta(abierta === materia.id ? null : materia.id)}
+            guardando={guardando}
+            onGuardar={(form) => handleGuardarEdicion(materia.id, form)}
+            onCancelar={() => setAbierta(null)}
+            onBorrar={() => handleBorrar(materia.id)}
+          />
         ))}
         {regulares.length === 0 && <StateMessage>Todavía no hay materias — agrega la primera.</StateMessage>}
       </div>
 
       {extra.length > 0 && (
         <div>
-          <p className="mb-2 mt-2 text-[12px] uppercase tracking-wide text-ink-muted">Extracurriculares</p>
+          <p className="mb-2 mt-2 text-[10px] uppercase tracking-[0.14em] text-ink-muted">Extracurriculares</p>
           <div className="flex flex-col gap-2.5">
             {extra.map((materia) => (
-              <Card key={materia.id} className="p-0">
-                <button
-                  type="button"
-                  onClick={() => setAbierta(abierta === materia.id ? null : materia.id)}
-                  className="flex w-full items-center justify-between gap-3 p-4 text-left"
-                >
-                  <div className="flex min-w-0 flex-col gap-0.5">
-                    <div className="flex items-center gap-2 text-[14px] font-medium">
-                      <SubjectDot materiaId={materia.id} />
-                      {materia.nombre}
-                    </div>
-                    <span className="text-[12px] text-ink-muted">{resumenHorario(materia.horario)}</span>
-                  </div>
-                  <IconChevron className={`h-4 w-4 shrink-0 text-ink-muted transition-transform ${abierta === materia.id ? "rotate-90" : ""}`} />
-                </button>
-                {abierta === materia.id && (
-                  <MateriaForm
-                    materiaId={materia.id}
-                    inicial={{
-                      nombre: materia.nombre,
-                      codigo: materia.codigo,
-                      nrc: materia.nrc,
-                      profesor: materia.profesor,
-                      color_light: materia.colorLight,
-                      color_dark: materia.colorDark,
-                      horario: materia.horario,
-                      cortes: materia.cortes,
-                      es_extracurricular: materia.esExtracurricular,
-                    }}
-                    guardando={guardando}
-                    onGuardar={(form) => handleGuardarEdicion(materia.id, form)}
-                    onCancelar={() => setAbierta(null)}
-                    onBorrar={() => handleBorrar(materia.id)}
-                  />
-                )}
-              </Card>
+              <MateriaItem
+                key={materia.id}
+                materia={materia}
+                abierta={abierta === materia.id}
+                onToggle={() => setAbierta(abierta === materia.id ? null : materia.id)}
+                guardando={guardando}
+                onGuardar={(form) => handleGuardarEdicion(materia.id, form)}
+                onCancelar={() => setAbierta(null)}
+                onBorrar={() => handleBorrar(materia.id)}
+              />
             ))}
           </div>
         </div>

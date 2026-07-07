@@ -9,19 +9,46 @@ body,
 }
 
 body {
-  background-color: #f9f9f7;
+  background-color: #faf7f0;
   color: #0b0b0b;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: none;
+  transition: background-color 0.6s ease, color 0.6s ease;
 }
 
 @media (prefers-color-scheme: dark) {
   body {
-    background-color: #0d0d0d;
+    background-color: #0d0d0c;
     color: #ffffff;
   }
 }
 
 * {
   -webkit-font-smoothing: antialiased;
+}
+
+/* El cambio de tema (claro/oscuro) sigue al sistema -- la transicion de
+   "body" de arriba ya hace que el fondo/texto base crucen suavemente en vez
+   de saltar. A proposito NO se aplica a *,*::before,*::after: los cambios de
+   color por interaccion (chips, estados de taller) deben sentirse
+   inmediatos, no competir con una transicion de 600ms de fondo. */
+.studi-noise-overlay {
+  transition: none !important;
+}
+
+.studi-noise-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.025;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@media (prefers-color-scheme: dark) {
+  .studi-noise-overlay {
+    mix-blend-mode: overlay;
+    opacity: 0.04;
+  }
 }
