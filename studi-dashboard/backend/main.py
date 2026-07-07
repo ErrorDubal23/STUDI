@@ -7,6 +7,7 @@ audio uploads and review-taller requests, dropping them as files that the
 OpenClaw skills (studi-audio, studi-taller) pick up on their own schedule.
 """
 
+import asyncio
 import json
 import os
 import re
@@ -33,7 +34,6 @@ DATA_DIR = Path(os.environ.get("STUDI_DATA_DIR", "~/.openclaw/studi")).expanduse
 TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
 BRIGHTSPACE_DIR = DATA_DIR / "brightspace"
 AUDIO_INBOX_DIR = DATA_DIR / "audio_pendiente"
-TALLER_REQUESTS_DIR = DATA_DIR / "talleres" / "solicitudes"
 TALLER_GENERADOS_DIR = DATA_DIR / "talleres" / "generados"
 REPASO_FILE = DATA_DIR / "repaso_hoy.json"
 MATERIAS_FILE = DATA_DIR / "materias.json"
@@ -51,6 +51,22 @@ REGISTRAR_DESEMPENO_SCRIPT = Path(os.environ.get(
     "STUDI_REGISTRAR_DESEMPENO_SCRIPT",
     "/home/seh/.openclaw/workspace/skills/studi-taller/registrar_desempeno.py",
 ))
+
+# Watcher de audio: procesa audio_pendiente/ solo, sin depender de que
+# alguien le pida a Yoda por Telegram que lo haga. Reutiliza transcribe.sh
+# (Whisper) de la skill studi-audio y el contenido real de process.md como
+# prompt directo a Ollama -- un solo texto canonico, usado tanto por Yoda a
+# mano como por este watcher.
+TRANSCRIBE_SCRIPT = Path(os.environ.get(
+    "STUDI_TRANSCRIBE_SCRIPT",
+    "/home/seh/.openclaw/workspace/skills/studi-audio/transcribe.sh",
+))
+PROCESS_MD_PATH = Path(os.environ.get(
+    "STUDI_PROCESS_MD",
+    "/home/seh/.openclaw/workspace/skills/studi-audio/process.md",
+))
+AUDIO_WATCH_INTERVAL = int(os.environ.get("STUDI_AUDIO_WATCH_INTERVAL", "25"))
+AUDIO_PROCESADOS_DIR = AUDIO_INBOX_DIR / "procesados"
 
 FRONTEND_DIST = Path(os.environ.get("STUDI_FRONTEND_DIST", Path(__file__).resolve().parent.parent / "frontend" / "dist"))
 
@@ -643,23 +659,6 @@ async def api_audio(file: UploadFile = File(...), materia: Optional[str] = Form(
     }
 
 
-@app.post("/api/talleres/generar")
-async def api_generar_taller(materia_id: str = Form(...), temas: str = Form("")):
-    TALLER_REQUESTS_DIR.mkdir(parents=True, exist_ok=True)
-    subject = next((s for s in load_materias() if s["id"] == materia_id), SUBJECT_FALLBACK)
-    timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    solicitud = {
-        "materia_id": materia_id,
-        "materia": subject.get("nombre") or materia_id,
-        "temas": [t.strip() for t in temas.split(",") if t.strip()],
-        "solicitado_en": datetime.now().isoformat(),
-        "estado": "pendiente",
-    }
-    destino = TALLER_REQUESTS_DIR / f"{timestamp}_{materia_id}.json"
-    destino.write_text(json.dumps(solicitud, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"ok": True, "solicitud": solicitud, "archivo": destino.name}
-
-
 def list_talleres_generados() -> list[dict]:
     if not TALLER_GENERADOS_DIR.exists():
         return []
@@ -717,6 +716,29 @@ equivocada sin indicios de entender el tema)."""
 RESULTADO_PATTERN = re.compile(r"^RESULTADO:\s*(domina|parcial|fallo)\s*$", re.IGNORECASE | re.MULTILINE)
 
 
+def _llamar_ollama(system_prompt: str, mensaje_usuario: str, timeout: int = 60) -> str:
+    body = json.dumps({
+        "model": OLLAMA_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": mensaje_usuario},
+        ],
+        "stream": False,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"{OLLAMA_URL}/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            data = json.loads(res.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise HTTPException(status_code=502, detail=f"No se pudo conectar con el modelo de IA: {exc}")
+    return data.get("message", {}).get("content", "")
+
+
 class RespuestaTallerInput(BaseModel):
     numero: int
     respuesta: str
@@ -736,28 +758,7 @@ def api_taller_responder(taller_id: str, payload: RespuestaTallerInput):
         f"Pregunta ({pregunta.get('materia')}): {pregunta.get('pregunta')}\n\n"
         f"Respuesta del estudiante: {payload.respuesta}"
     )
-    body = json.dumps({
-        "model": OLLAMA_MODEL,
-        "messages": [
-            {"role": "system", "content": TALLER_SYSTEM_PROMPT},
-            {"role": "user", "content": mensaje_usuario},
-        ],
-        "stream": False,
-    }).encode("utf-8")
-
-    req = urllib.request.Request(
-        f"{OLLAMA_URL}/api/chat",
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as res:
-            data = json.loads(res.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError) as exc:
-        raise HTTPException(status_code=502, detail=f"No se pudo conectar con el modelo de IA: {exc}")
-
-    contenido = data.get("message", {}).get("content", "")
+    contenido = _llamar_ollama(TALLER_SYSTEM_PROMPT, mensaje_usuario, timeout=60)
     match = RESULTADO_PATTERN.search(contenido)
     resultado = match.group(1).lower() if match else None
     feedback = RESULTADO_PATTERN.sub("", contenido).strip()
@@ -837,27 +838,7 @@ def api_generar_taller_descargable(payload: GenerarDescargableInput):
         )
 
     mensaje_usuario = f"Materia: {materia['nombre']}\nTemas a cubrir: {', '.join(temas)}"
-    body = json.dumps({
-        "model": OLLAMA_MODEL,
-        "messages": [
-            {"role": "system", "content": TALLER_DESCARGABLE_SYSTEM_PROMPT},
-            {"role": "user", "content": mensaje_usuario},
-        ],
-        "stream": False,
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        f"{OLLAMA_URL}/api/chat",
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=90) as res:
-            data = json.loads(res.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError) as exc:
-        raise HTTPException(status_code=502, detail=f"No se pudo conectar con el modelo de IA: {exc}")
-
-    contenido = data.get("message", {}).get("content", "")
+    contenido = _llamar_ollama(TALLER_DESCARGABLE_SYSTEM_PROMPT, mensaje_usuario, timeout=90)
     try:
         ejercicios = _extraer_json(contenido)["ejercicios"]
     except (json.JSONDecodeError, KeyError, TypeError):
@@ -887,6 +868,189 @@ def api_generar_taller_descargable(payload: GenerarDescargableInput):
         json.dumps(taller, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return taller
+
+
+TALLER_INTERACTIVO_SYSTEM_PROMPT = """Eres STUDI generando un taller de práctica con preguntas abiertas.
+
+Genera 5 preguntas de estudio ABIERTAS (nunca de selección múltiple) sobre \
+los temas indicados, yendo de menor a mayor dificultad. Si hay más de una \
+materia entre los temas, mezcla preguntas entre ellas (interleaving) en vez \
+de agruparlas.
+
+Reglas:
+- Las preguntas deben hacer pensar, no solo memorizar -- nunca reveles la
+  respuesta en el enunciado.
+- Máximo 2 preguntas por materia.
+- Responde ÚNICAMENTE con JSON válido, sin texto antes ni después, con
+  este formato exacto:
+  {"preguntas": [{"numero": 1, "materia_id": "<id>", "materia": "<nombre>", "tema": "<tema breve>", "pregunta": "<texto>"}]}
+- Escribe todo en español."""
+
+
+class GenerarInteractivoInput(BaseModel):
+    materia_id: str
+    corte_id: Optional[str] = None
+    temas: Optional[list[str]] = None
+
+
+@app.post("/api/talleres/generar-interactivo")
+def api_generar_taller_interactivo(payload: GenerarInteractivoInput):
+    materias = load_materias()
+    materia = next((m for m in materias if m["id"] == payload.materia_id), None)
+    if not materia:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+
+    temas = list(payload.temas or [])
+    if payload.corte_id:
+        corte = next((c for c in (materia.get("cortes") or []) if c["id"] == payload.corte_id), None)
+        if not corte:
+            raise HTTPException(status_code=404, detail="Corte no encontrado")
+        if corte.get("fecha_inicio") and corte.get("fecha_fin"):
+            for ficha in list_fichas():
+                if (
+                    ficha["materia_id"] == payload.materia_id
+                    and ficha.get("fecha")
+                    and corte["fecha_inicio"] <= ficha["fecha"] <= corte["fecha_fin"]
+                ):
+                    temas.extend(ficha.get("temas", []))
+
+    if not temas:
+        # Sin temas ni corte especificos: usa todos los temas de todas las
+        # fichas de esta materia, sin filtrar por fecha -- permite practicar
+        # en cualquier momento, no solo lo que el scheduler marque vencido.
+        for ficha in list_fichas():
+            if ficha["materia_id"] == payload.materia_id:
+                temas.extend(ficha.get("temas", []))
+    temas = list(dict.fromkeys(temas))
+
+    if not temas:
+        raise HTTPException(status_code=400, detail="No hay fichas con temas para esta materia todavía")
+
+    mensaje_usuario = f"Materia: {materia['nombre']}\nTemas disponibles: {', '.join(temas)}"
+    contenido = _llamar_ollama(TALLER_INTERACTIVO_SYSTEM_PROMPT, mensaje_usuario, timeout=60)
+    try:
+        preguntas = _extraer_json(contenido)["preguntas"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        raise HTTPException(status_code=502, detail="El modelo no devolvió un taller válido, intenta de nuevo")
+
+    timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    taller_id = f"{timestamp}_{payload.materia_id}"
+    taller = {
+        "id": taller_id,
+        "creado_en": datetime.now().isoformat(),
+        "tipo": "normal",
+        "materias": list(dict.fromkeys(p.get("materia_id", payload.materia_id) for p in preguntas)),
+        "preguntas": [
+            {
+                "numero": p.get("numero", i + 1),
+                "materia_id": p.get("materia_id", payload.materia_id),
+                "materia": p.get("materia", materia["nombre"]),
+                "tema": p.get("tema", ""),
+                "pregunta": p.get("pregunta", ""),
+            }
+            for i, p in enumerate(preguntas)
+        ],
+    }
+    TALLER_GENERADOS_DIR.mkdir(parents=True, exist_ok=True)
+    (TALLER_GENERADOS_DIR / f"{taller_id}.json").write_text(
+        json.dumps(taller, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return taller
+
+
+def _formatear_brightspace_context(materia_id: str) -> str:
+    for materia_data in list_brightspace():
+        if materia_data["materia_id"] != materia_id:
+            continue
+        partes = [f"- {modulo['titulo']}" for modulo in materia_data["modulos"]]
+        for entrega in materia_data["entregas"]:
+            if entrega.get("fecha_entrega"):
+                partes.append(f"- Entrega: {entrega['nombre']} ({entrega['fecha_entrega']})")
+        return "\n".join(partes)
+    return ""
+
+
+def _renderizar_process_md(materia: dict, fecha: str, transcript: str, brightspace_context: str) -> str:
+    plantilla = PROCESS_MD_PATH.read_text(encoding="utf-8")
+    return (
+        plantilla
+        .replace("{{materia}}", materia.get("nombre", ""))
+        .replace("{{profesor}}", materia.get("profesor") or "No especificado")
+        .replace("{{fecha}}", fecha)
+        .replace("{{transcript}}", transcript)
+        .replace("{{brightspace_context}}", brightspace_context or "Sin contenido de Brightspace disponible")
+    )
+
+
+def _procesar_audio_pendiente(path: Path) -> None:
+    match_nombre = re.match(r"^(\d{4}-\d{2}-\d{2})T\d{2}-\d{2}-\d{2}_(.+)$", path.stem)
+    if not match_nombre:
+        print(f"[audio-watcher] nombre inesperado, se ignora: {path.name}")
+        return
+    fecha, materia_slug = match_nombre.group(1), match_nombre.group(2)
+
+    materia = next((m for m in load_materias() if m["id"] == materia_slug), None)
+    if not materia:
+        print(f"[audio-watcher] materia '{materia_slug}' no encontrada en materias.json, se deja pendiente")
+        return
+    if not TRANSCRIBE_SCRIPT.exists():
+        print(f"[audio-watcher] transcribe.sh no encontrado en {TRANSCRIBE_SCRIPT}, se deja pendiente")
+        return
+    if not PROCESS_MD_PATH.exists():
+        print(f"[audio-watcher] process.md no encontrado en {PROCESS_MD_PATH}, se deja pendiente")
+        return
+
+    resultado = subprocess.run(
+        ["bash", str(TRANSCRIBE_SCRIPT), str(path), materia_slug, fecha],
+        capture_output=True, text=True, timeout=600,
+    )
+    if resultado.returncode != 0:
+        print(f"[audio-watcher] transcribe.sh falló para {path.name}: {resultado.stderr[-500:]}")
+        return
+
+    match_path = re.search(r"TRANSCRIPT_PATH=(\S+)", resultado.stdout)
+    if not match_path:
+        print(f"[audio-watcher] no se pudo leer la ruta del transcript para {path.name}")
+        return
+    transcript_path = Path(match_path.group(1))
+    if not transcript_path.exists():
+        print(f"[audio-watcher] transcript no encontrado en {transcript_path}")
+        return
+    transcript = transcript_path.read_text(encoding="utf-8", errors="replace")
+
+    brightspace_context = _formatear_brightspace_context(materia["id"])
+    prompt = _renderizar_process_md(materia, fecha, transcript, brightspace_context)
+    contenido = _llamar_ollama(prompt, "Genera la ficha según las instrucciones.", timeout=180)
+
+    ficha_path = TRANSCRIPTS_DIR / f"{fecha}_{materia['nombre'].replace(' ', '_')}.txt"
+    TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+    ficha_path.write_text(contenido, encoding="utf-8")
+
+    # El transcript crudo de transcribe.sh era solo un paso intermedio -- no
+    # es una ficha real (no tiene Materia:/Fecha:/Temas:) y viviría en la
+    # misma carpeta que list_fichas() escanea, apareciendo como "sin materia".
+    if transcript_path.exists() and transcript_path != ficha_path:
+        transcript_path.unlink(missing_ok=True)
+
+    AUDIO_PROCESADOS_DIR.mkdir(parents=True, exist_ok=True)
+    path.rename(AUDIO_PROCESADOS_DIR / path.name)
+    print(f"[audio-watcher] ficha generada: {ficha_path.name}")
+
+
+async def _audio_watcher_loop():
+    while True:
+        try:
+            if AUDIO_INBOX_DIR.exists():
+                for path in sorted(AUDIO_INBOX_DIR.glob("*.webm")):
+                    _procesar_audio_pendiente(path)
+        except Exception as exc:
+            print(f"[audio-watcher] error inesperado: {exc}")
+        await asyncio.sleep(AUDIO_WATCH_INTERVAL)
+
+
+@app.on_event("startup")
+async def _iniciar_audio_watcher():
+    asyncio.create_task(_audio_watcher_loop())
 
 
 # ---------------------------------------------------------------------------

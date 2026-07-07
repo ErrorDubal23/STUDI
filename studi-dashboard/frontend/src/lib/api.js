@@ -57,12 +57,11 @@ export const api = {
       xhr.send(form);
     }),
 
-  generarTaller: (materiaId, temas) => {
-    const form = new FormData();
-    form.append("materia_id", materiaId);
-    form.append("temas", (temas || []).join(", "));
-    return request("/talleres/generar", { method: "POST", body: form });
-  },
+  generarTallerInteractivo: (materiaId, temas) =>
+    requestJSON("/talleres/generar-interactivo", {
+      method: "POST",
+      body: JSON.stringify({ materia_id: materiaId, temas: temas && temas.length ? temas : undefined }),
+    }),
   talleres: () => request("/talleres"),
   taller: (id) => request(`/talleres/${encodeURIComponent(id)}`),
   responderTaller: (id, numero, respuesta) =>

@@ -17,6 +17,8 @@ export default function Fichas() {
   const [error, setError] = useState(null);
   const [filtro, setFiltro] = useState(null);
   const [abierta, setAbierta] = useState(null);
+  const [generando, setGenerando] = useState(false);
+  const [mensajeTaller, setMensajeTaller] = useState(null);
 
   useEffect(() => {
     api
@@ -36,6 +38,19 @@ export default function Fichas() {
     return filtro ? fichas.filter((f) => f.materia_id === filtro) : fichas;
   }, [fichas, filtro]);
 
+  async function generarTallerDeMateria() {
+    setGenerando(true);
+    setMensajeTaller(null);
+    try {
+      await api.generarTallerInteractivo(filtro);
+      setMensajeTaller({ tipo: "ok", texto: "Listo — búscalo en la pestaña Talleres." });
+    } catch (err) {
+      setMensajeTaller({ tipo: "error", texto: err.message });
+    } finally {
+      setGenerando(false);
+    }
+  }
+
   if (error) return <StateMessage>{error}</StateMessage>;
   if (!fichas) return <StateMessage>Cargando fichas…</StateMessage>;
   if (fichas.length === 0) return <StateMessage>Todavía no hay fichas de clase.</StateMessage>;
@@ -50,9 +65,35 @@ export default function Fichas() {
           materiaId={materiasConFichas[0]?.id}
         />
         {materiasConFichas.map((s) => (
-          <SubjectChip key={s.id} materiaId={s.id} active={filtro === s.id} onClick={() => setFiltro(s.id)} />
+          <SubjectChip
+            key={s.id}
+            materiaId={s.id}
+            active={filtro === s.id}
+            onClick={() => {
+              setFiltro(s.id);
+              setMensajeTaller(null);
+            }}
+          />
         ))}
       </div>
+
+      {filtro && (
+        <div className="mt-3 flex items-center gap-2">
+          <button
+            type="button"
+            disabled={generando}
+            onClick={generarTallerDeMateria}
+            className="rounded-full border border-hairline px-3.5 py-1.5 text-[13px] text-ink-secondary disabled:opacity-50 dark:border-hairline-dark dark:text-ink-dark-secondary"
+          >
+            {generando ? "Generando…" : "Generar taller de esta materia"}
+          </button>
+          {mensajeTaller && (
+            <span className={`text-[12px] ${mensajeTaller.tipo === "error" ? "text-[#d03b3b]" : "text-[#0ca30c]"}`}>
+              {mensajeTaller.texto}
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="mt-3 flex flex-col gap-2.5">
         {visibles.map((ficha) => {

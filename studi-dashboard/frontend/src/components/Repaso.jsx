@@ -44,7 +44,7 @@ export default function Repaso() {
   async function generarTaller(bloque) {
     setEnviando(bloque.key);
     try {
-      await api.generarTaller(bloque.materiaId, bloque.temas);
+      await api.generarTallerInteractivo(bloque.materiaId, bloque.temas);
       setEnviados((prev) => new Set(prev).add(bloque.key));
     } catch (err) {
       setError(err.message);
@@ -94,10 +94,10 @@ export default function Repaso() {
               {yaEnviado ? (
                 <>
                   <IconCheck className="h-4 w-4" />
-                  Taller solicitado
+                  Taller listo — mira Talleres
                 </>
               ) : enviando === bloque.key ? (
-                "Enviando…"
+                "Generando…"
               ) : (
                 "Generar taller"
               )}
