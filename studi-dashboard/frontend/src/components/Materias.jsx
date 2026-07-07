@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { useState } from "react";
 import { api } from "../lib/api.js";
+import { useAuth } from "../lib/AuthContext.jsx";
 import { useMaterias } from "../lib/MateriasContext.jsx";
 import { TAP_PRESS } from "../lib/motion.js";
 import { SubjectDot, Card, Accordion, StateMessage } from "./ui.jsx";
@@ -278,6 +279,7 @@ function MateriaItem({ materia, abierta, onToggle, guardando, onGuardar, onCance
 }
 
 export default function Materias() {
+  const { usuario, logout } = useAuth();
   const { materias, loading, error, crear, editar, borrar, nuevoSemestre } = useMaterias();
   const [abierta, setAbierta] = useState(null); // id de materia en edicion, o "__nueva__"
   const [guardando, setGuardando] = useState(false);
@@ -405,6 +407,21 @@ export default function Materias() {
           </div>
         </div>
       )}
+
+      <Card className="flex items-center justify-between">
+        <div>
+          <p className="text-[13px] font-medium">{usuario?.nombre}</p>
+          <p className="text-[12px] text-ink-muted">@{usuario?.usuario}</p>
+        </div>
+        <motion.button
+          type="button"
+          whileTap={TAP_PRESS}
+          onClick={logout}
+          className="rounded-full border border-hairline px-4 py-2 text-[13px] text-ink-secondary dark:border-hairline-dark dark:text-ink-dark-secondary"
+        >
+          Cerrar sesión
+        </motion.button>
+      </Card>
     </div>
   );
 }

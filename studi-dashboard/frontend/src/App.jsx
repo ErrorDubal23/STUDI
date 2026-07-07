@@ -5,8 +5,10 @@ import Calendario from "./components/Calendario.jsx";
 import Repaso from "./components/Repaso.jsx";
 import Grabacion from "./components/Grabacion.jsx";
 import Brightspace from "./components/Brightspace.jsx";
+import Login from "./components/Login.jsx";
 import Materias from "./components/Materias.jsx";
 import Talleres from "./components/Talleres.jsx";
+import { AuthProvider, useAuth } from "./lib/AuthContext.jsx";
 import { MateriasProvider } from "./lib/MateriasContext.jsx";
 import { SPRING_SNAPPY, SPRING_SOFT, TAP_PRESS } from "./lib/motion.js";
 import {
@@ -39,6 +41,21 @@ const SECUNDARIOS = [
 const TODOS = [...PRIMARY, ...SECUNDARIOS];
 
 export default function App() {
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
+  );
+}
+
+function AuthGate() {
+  const { usuario, cargando } = useAuth();
+  if (cargando) return null;
+  if (!usuario) return <Login />;
+  return <AppShell />;
+}
+
+function AppShell() {
   const [activeTab, setActiveTab] = useState("repaso");
   const [mostrarMas, setMostrarMas] = useState(false);
   const active = TODOS.find((t) => t.id === activeTab) ?? TODOS[0];

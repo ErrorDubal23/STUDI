@@ -21,9 +21,11 @@ pip install --quiet -r requirements.txt
 
 export STUDI_DATA_DIR="${STUDI_DATA_DIR:-$HOME/.openclaw/studi}"
 export STUDI_FRONTEND_DIST="${STUDI_FRONTEND_DIST:-$(cd .. && pwd)/frontend/dist}"
+# Codigo que cada estudiante necesita para crear su propia cuenta (ver
+# POST /api/auth/registro) -- cambialo antes de exponer el servicio.
+export STUDI_INVITE_CODE="${STUDI_INVITE_CODE:-studi2026}"
 
-mkdir -p "$STUDI_DATA_DIR/transcripts" "$STUDI_DATA_DIR/brightspace" \
-         "$STUDI_DATA_DIR/audio_pendiente" "$STUDI_DATA_DIR/talleres/solicitudes"
+mkdir -p "$STUDI_DATA_DIR/usuarios"
 
 if [[ "${1:-}" == "--reload" ]]; then
   exec uvicorn main:app --host 0.0.0.0 --port 8080 --reload

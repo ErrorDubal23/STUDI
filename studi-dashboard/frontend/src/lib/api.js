@@ -1,7 +1,26 @@
 const BASE = "/api";
+const TOKEN_KEY = "studi_token";
+
+// Callback que AuthContext registra para reaccionar a una sesion invalida
+// (token vencido/borrado) sin que api.js dependa de React.
+let onUnauthorized = null;
+export function setOnUnauthorized(callback) {
+  onUnauthorized = callback;
+}
+
+function authHeaders() {
+  const token = localStorage.getItem(TOKEN_KEY);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 async function request(path, options = {}) {
-  const res = await fetch(`${BASE}${path}`, options);
+  const res = await fetch(`${BASE}${path}`, {
+    ...options,
+    headers: { ...authHeaders(), ...(options.headers || {}) },
+  });
+  if (res.status === 401) {
+    onUnauthorized?.();
+  }
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
     throw new Error(detail.detail || `Error ${res.status} en ${path}`);
@@ -16,6 +35,20 @@ function requestJSON(path, options = {}) {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
 }
+
+export const auth = {
+  login: (usuario, password) => requestJSON("/auth/login", { method: "POST", body: JSON.stringify({ usuario, password }) }),
+  registro: (usuario, password, nombre, codigo_invitacion) =>
+    requestJSON("/auth/registro", {
+      method: "POST",
+      body: JSON.stringify({ usuario, password, nombre, codigo_invitacion }),
+    }),
+  logout: () => request("/auth/logout", { method: "POST" }),
+  yo: () => request("/auth/yo"),
+  guardarToken: (token) => localStorage.setItem(TOKEN_KEY, token),
+  borrarToken: () => localStorage.removeItem(TOKEN_KEY),
+  tieneToken: () => Boolean(localStorage.getItem(TOKEN_KEY)),
+};
 
 export const api = {
   status: () => request("/status"),
@@ -41,6 +74,8 @@ export const api = {
 
       const xhr = new XMLHttpRequest();
       xhr.open("POST", `${BASE}/audio`);
+      const token = localStorage.getItem(TOKEN_KEY);
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable && onProgress) {
           onProgress(Math.round((event.loaded / event.total) * 100));
@@ -50,6 +85,7 @@ export const api = {
         if (xhr.status >= 200 && xhr.status < 300) {
           resolve(JSON.parse(xhr.responseText));
         } else {
+          if (xhr.status === 401) onUnauthorized?.();
           reject(new Error(`Error ${xhr.status} subiendo el audio`));
         }
       };

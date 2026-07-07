@@ -31,14 +31,24 @@ pip install --quiet --upgrade pip
 pip install --quiet -r requirements.txt
 deactivate
 
-mkdir -p "$HOME/.openclaw/studi/transcripts" \
-         "$HOME/.openclaw/studi/brightspace" \
-         "$HOME/.openclaw/studi/audio_pendiente" \
-         "$HOME/.openclaw/studi/talleres/solicitudes"
+mkdir -p "$HOME/.openclaw/studi/usuarios"
 
-echo "== Instalando el servicio systemd =="
 SERVICE_FILE=/etc/systemd/system/studi-dashboard.service
-sudo tee "$SERVICE_FILE" > /dev/null <<EOF
+if [ -f "$SERVICE_FILE" ]; then
+  # Un despliegue ya existente puede tener ajustes manuales que este script
+  # no conoce (ej. un PATH extra para binarios como whisper, o un interprete
+  # de Python distinto al venv de aqui abajo) -- sobreescribir el unit file a
+  # ciegas en cada re-run los perderia silenciosamente. Se deja intacto y solo
+  # se avisa que revises manualmente.
+  echo "== Servicio systemd ya existe, no se regenera =="
+  echo "Si esta es la primera vez que agregas STUDI_INVITE_CODE, edita $SERVICE_FILE"
+  echo "a mano (sudo systemctl edit --full studi-dashboard) y agrega una linea:"
+  echo "  Environment=STUDI_INVITE_CODE=<tu-codigo>"
+  echo "junto a las demas lineas Environment= que ya tenga, luego:"
+  echo "  sudo systemctl daemon-reload && sudo systemctl restart studi-dashboard"
+else
+  echo "== Instalando el servicio systemd =="
+  sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=STUDI Dashboard
 After=network.target
@@ -49,6 +59,9 @@ User=${USER}
 WorkingDirectory=${ROOT}/backend
 Environment=STUDI_DATA_DIR=${HOME}/.openclaw/studi
 Environment=STUDI_FRONTEND_DIST=${ROOT}/frontend/dist
+# Codigo que cada estudiante necesita para crear su propia cuenta (POST
+# /api/auth/registro) -- cambia este valor por uno propio antes de compartirlo.
+Environment=STUDI_INVITE_CODE=cambiar-este-codigo
 ExecStart=${ROOT}/backend/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8080
 Restart=on-failure
 
@@ -56,9 +69,10 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF
 
-sudo systemctl daemon-reload
-sudo systemctl enable studi-dashboard
-sudo systemctl restart studi-dashboard
+  sudo systemctl daemon-reload
+  sudo systemctl enable studi-dashboard
+  sudo systemctl restart studi-dashboard
+fi
 
 echo "== Listo =="
 echo "Dashboard disponible en http://<ip-del-servidor>:8080"

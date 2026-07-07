@@ -8,19 +8,22 @@ OpenClaw skills (studi-audio, studi-taller) pick up on their own schedule.
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import unicodedata
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,12 +34,10 @@ from pydantic import BaseModel
 # ---------------------------------------------------------------------------
 
 DATA_DIR = Path(os.environ.get("STUDI_DATA_DIR", "~/.openclaw/studi")).expanduser()
-TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
-BRIGHTSPACE_DIR = DATA_DIR / "brightspace"
-AUDIO_INBOX_DIR = DATA_DIR / "audio_pendiente"
-TALLER_GENERADOS_DIR = DATA_DIR / "talleres" / "generados"
-REPASO_FILE = DATA_DIR / "repaso_hoy.json"
-MATERIAS_FILE = DATA_DIR / "materias.json"
+USUARIOS_DIR = DATA_DIR / "usuarios"
+USUARIOS_FILE = DATA_DIR / "usuarios.json"
+SESIONES_FILE = DATA_DIR / "sesiones.json"
+INVITE_CODE = os.environ.get("STUDI_INVITE_CODE", "")
 
 # Tutoria interactiva en vivo: le habla directo a Ollama (no al gateway de
 # OpenClaw -- ese solo expone su UI de control y /health, confirmado en
@@ -66,9 +67,98 @@ PROCESS_MD_PATH = Path(os.environ.get(
     "/home/seh/.openclaw/workspace/skills/studi-audio/process.md",
 ))
 AUDIO_WATCH_INTERVAL = int(os.environ.get("STUDI_AUDIO_WATCH_INTERVAL", "25"))
-AUDIO_PROCESADOS_DIR = AUDIO_INBOX_DIR / "procesados"
 
 FRONTEND_DIST = Path(os.environ.get("STUDI_FRONTEND_DIST", Path(__file__).resolve().parent.parent / "frontend" / "dist"))
+
+
+# ---------------------------------------------------------------------------
+# Perfiles multiusuario: cada usuario tiene su propio subarbol bajo
+# usuarios/<id>/ (materias, fichas, brightspace, audio, talleres, repaso) --
+# el mismo layout de archivos que antes, solo que anclado por usuario en vez
+# de vivir suelto en la raiz de DATA_DIR.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Paths:
+    root: Path
+    transcripts: Path
+    brightspace: Path
+    audio_inbox: Path
+    audio_procesados: Path
+    talleres_generados: Path
+    repaso_file: Path
+    materias_file: Path
+    desempeno_file: Path
+
+
+def paths_for(usuario_id: str) -> Paths:
+    root = USUARIOS_DIR / usuario_id
+    audio_inbox = root / "audio_pendiente"
+    return Paths(
+        root=root,
+        transcripts=root / "transcripts",
+        brightspace=root / "brightspace",
+        audio_inbox=audio_inbox,
+        audio_procesados=audio_inbox / "procesados",
+        talleres_generados=root / "talleres" / "generados",
+        repaso_file=root / "repaso_hoy.json",
+        materias_file=root / "materias.json",
+        desempeno_file=root / "desempeno.json",
+    )
+
+
+def _hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
+    salt = salt or secrets.token_hex(16)
+    hashed = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200_000)
+    return hashed.hex(), salt
+
+
+def _verify_password(password: str, password_hash: str, salt: str) -> bool:
+    hashed, _ = _hash_password(password, salt)
+    return secrets.compare_digest(hashed, password_hash)
+
+
+def load_usuarios() -> list[dict]:
+    if not USUARIOS_FILE.exists():
+        return []
+    try:
+        return json.loads(USUARIOS_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+
+
+def save_usuarios(usuarios: list[dict]) -> None:
+    USUARIOS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    USUARIOS_FILE.write_text(json.dumps(usuarios, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_sesiones() -> dict:
+    if not SESIONES_FILE.exists():
+        return {}
+    try:
+        return json.loads(SESIONES_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def save_sesiones(sesiones: dict) -> None:
+    SESIONES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SESIONES_FILE.write_text(json.dumps(sesiones, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def get_usuario_actual(authorization: Optional[str] = Header(None)) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="No autenticado")
+    token = authorization.removeprefix("Bearer ").strip()
+    usuario_id = load_sesiones().get(token)
+    if not usuario_id:
+        raise HTTPException(status_code=401, detail="Sesión inválida o expirada")
+    usuario = next((u for u in load_usuarios() if u["id"] == usuario_id), None)
+    if not usuario:
+        raise HTTPException(status_code=401, detail="Usuario no encontrado")
+    return usuario
+
 
 # Seed used the first time materias.json doesn't exist yet -- matches the
 # semester profile already tracked by the studi-audio skill on the server
@@ -169,20 +259,20 @@ SUBJECT_FALLBACK = {
 }
 
 
-def load_materias() -> list[dict]:
-    if not MATERIAS_FILE.exists():
+def load_materias(paths: Paths) -> list[dict]:
+    if not paths.materias_file.exists():
         materias = [dict(m) for m in DEFAULT_SUBJECTS]
-        save_materias(materias)
+        save_materias(paths, materias)
         return materias
     try:
-        return json.loads(MATERIAS_FILE.read_text(encoding="utf-8"))
+        return json.loads(paths.materias_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return [dict(m) for m in DEFAULT_SUBJECTS]
 
 
-def save_materias(materias: list[dict]) -> None:
-    MATERIAS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    MATERIAS_FILE.write_text(json.dumps(materias, ensure_ascii=False, indent=2), encoding="utf-8")
+def save_materias(paths: Paths, materias: list[dict]) -> None:
+    paths.materias_file.parent.mkdir(parents=True, exist_ok=True)
+    paths.materias_file.write_text(json.dumps(materias, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def slugify(nombre: str) -> str:
@@ -195,11 +285,11 @@ def _normalize(text: str) -> str:
     return text.lower().strip()
 
 
-def resolve_subject(materia_text: Optional[str], materias: Optional[list[dict]] = None) -> dict:
+def resolve_subject(materia_text: Optional[str], materias: list[dict]) -> dict:
     if not materia_text:
         return {**SUBJECT_FALLBACK, "nombre": "Sin materia"}
     norm = _normalize(materia_text)
-    for subject in materias if materias is not None else load_materias():
+    for subject in materias:
         if _normalize(subject["nombre"]) in norm or norm in _normalize(subject["nombre"]):
             return subject
         if subject["codigo"] and subject["codigo"].lower() in norm:
@@ -235,7 +325,7 @@ def _split_list_value(value: str) -> list[str]:
     return [p.strip(" -\t") for p in parts if p.strip(" -\t")]
 
 
-def parse_ficha(raw_text: str) -> dict:
+def parse_ficha(raw_text: str, materias: list[dict]) -> dict:
     lines = raw_text.splitlines()
     fields: dict = {}
     body_lines: list[str] = []
@@ -279,7 +369,7 @@ def parse_ficha(raw_text: str) -> dict:
 
     fechas_detectadas = sorted(set(m.group(0) for m in DATE_PATTERN.finditer(raw_text)))
 
-    subject = resolve_subject(fields.get("materia"))
+    subject = resolve_subject(fields.get("materia"), materias)
 
     return {
         "materia": fields.get("materia") or subject["nombre"],
@@ -296,9 +386,9 @@ def parse_ficha(raw_text: str) -> dict:
     }
 
 
-def load_ficha(path: Path) -> dict:
+def load_ficha(path: Path, materias: list[dict]) -> dict:
     raw_text = path.read_text(encoding="utf-8", errors="replace")
-    parsed = parse_ficha(raw_text)
+    parsed = parse_ficha(raw_text, materias)
     stat = path.stat()
     return {
         "id": path.stem,
@@ -308,10 +398,11 @@ def load_ficha(path: Path) -> dict:
     }
 
 
-def list_fichas() -> list[dict]:
-    if not TRANSCRIPTS_DIR.exists():
+def list_fichas(paths: Paths, materias: Optional[list[dict]] = None) -> list[dict]:
+    if not paths.transcripts.exists():
         return []
-    fichas = [load_ficha(p) for p in sorted(TRANSCRIPTS_DIR.glob("*.txt"))]
+    materias = materias if materias is not None else load_materias(paths)
+    fichas = [load_ficha(p, materias) for p in sorted(paths.transcripts.glob("*.txt"))]
     fichas.sort(key=lambda f: f.get("fecha") or "", reverse=True)
     return fichas
 
@@ -337,10 +428,97 @@ def api_status():
         "hora_servidor": datetime.now().isoformat(),
         "data_dir": str(DATA_DIR),
         "data_dir_existe": DATA_DIR.exists(),
-        "fichas": len(list(TRANSCRIPTS_DIR.glob("*.txt"))) if TRANSCRIPTS_DIR.exists() else 0,
-        "brightspace_archivos": len(list(BRIGHTSPACE_DIR.glob("*.json"))) if BRIGHTSPACE_DIR.exists() else 0,
-        "repaso_disponible": REPASO_FILE.exists(),
     }
+
+
+class RegistroInput(BaseModel):
+    usuario: str
+    password: str
+    nombre: str
+    codigo_invitacion: str
+
+
+class LoginInput(BaseModel):
+    usuario: str
+    password: str
+
+
+def _usuario_publico(usuario: dict) -> dict:
+    return {"id": usuario["id"], "usuario": usuario["usuario"], "nombre": usuario["nombre"]}
+
+
+@app.post("/api/auth/registro")
+def api_registro(payload: RegistroInput):
+    if not INVITE_CODE or payload.codigo_invitacion != INVITE_CODE:
+        raise HTTPException(status_code=403, detail="Código de invitación inválido")
+    usuario_nombre = payload.usuario.strip()
+    if not usuario_nombre:
+        raise HTTPException(status_code=400, detail="El usuario no puede estar vacío")
+    if len(payload.password) < 6:
+        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 6 caracteres")
+
+    usuarios = load_usuarios()
+    if any(u["usuario"].lower() == usuario_nombre.lower() for u in usuarios):
+        raise HTTPException(status_code=409, detail="Ese nombre de usuario ya existe")
+
+    base_id = slugify(usuario_nombre)
+    usuario_id = base_id
+    existentes = {u["id"] for u in usuarios}
+    n = 2
+    while usuario_id in existentes:
+        usuario_id = f"{base_id}-{n}"
+        n += 1
+
+    password_hash, salt = _hash_password(payload.password)
+    nuevo = {
+        "id": usuario_id,
+        "usuario": usuario_nombre,
+        "nombre": payload.nombre.strip() or usuario_nombre,
+        "password_hash": password_hash,
+        "salt": salt,
+        "creado_en": datetime.now().isoformat(),
+    }
+    usuarios.append(nuevo)
+    save_usuarios(usuarios)
+    # Cuenta nueva empieza sin materias -- DEFAULT_SUBJECTS es el horario
+    # especifico del primer usuario (este semestre, sus NRC/profesores), no
+    # un seed generico que le sirva a cualquiera que se registre despues.
+    save_materias(paths_for(usuario_id), [])
+
+    token = secrets.token_urlsafe(32)
+    sesiones = load_sesiones()
+    sesiones[token] = usuario_id
+    save_sesiones(sesiones)
+    return {"token": token, "usuario": _usuario_publico(nuevo)}
+
+
+@app.post("/api/auth/login")
+def api_login(payload: LoginInput):
+    usuario = next(
+        (u for u in load_usuarios() if u["usuario"].lower() == payload.usuario.strip().lower()), None
+    )
+    if not usuario or not _verify_password(payload.password, usuario["password_hash"], usuario["salt"]):
+        raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
+    token = secrets.token_urlsafe(32)
+    sesiones = load_sesiones()
+    sesiones[token] = usuario["id"]
+    save_sesiones(sesiones)
+    return {"token": token, "usuario": _usuario_publico(usuario)}
+
+
+@app.post("/api/auth/logout")
+def api_logout(authorization: Optional[str] = Header(None)):
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ").strip()
+        sesiones = load_sesiones()
+        sesiones.pop(token, None)
+        save_sesiones(sesiones)
+    return {"ok": True}
+
+
+@app.get("/api/auth/yo")
+def api_yo(usuario: dict = Depends(get_usuario_actual)):
+    return _usuario_publico(usuario)
 
 
 class HorarioBloque(BaseModel):
@@ -389,13 +567,14 @@ class NuevoSemestreInput(BaseModel):
 
 
 @app.get("/api/materias")
-def api_materias():
-    return load_materias()
+def api_materias(usuario: dict = Depends(get_usuario_actual)):
+    return load_materias(paths_for(usuario["id"]))
 
 
 @app.post("/api/materias")
-def api_crear_materia(payload: MateriaInput):
-    materias = load_materias()
+def api_crear_materia(payload: MateriaInput, usuario: dict = Depends(get_usuario_actual)):
+    paths = paths_for(usuario["id"])
+    materias = load_materias(paths)
     base_id = slugify(payload.nombre)
     materia_id = base_id
     existentes = {m["id"] for m in materias}
@@ -405,67 +584,72 @@ def api_crear_materia(payload: MateriaInput):
         n += 1
     nueva = {"id": materia_id, **payload.model_dump()}
     materias.append(nueva)
-    save_materias(materias)
+    save_materias(paths, materias)
     return nueva
 
 
 @app.put("/api/materias/{materia_id}")
-def api_editar_materia(materia_id: str, payload: MateriaUpdate):
-    materias = load_materias()
+def api_editar_materia(materia_id: str, payload: MateriaUpdate, usuario: dict = Depends(get_usuario_actual)):
+    paths = paths_for(usuario["id"])
+    materias = load_materias(paths)
     idx = next((i for i, m in enumerate(materias) if m["id"] == materia_id), None)
     if idx is None:
         raise HTTPException(status_code=404, detail="Materia no encontrada")
     cambios = {k: v for k, v in payload.model_dump().items() if v is not None}
     materias[idx] = {**materias[idx], **cambios}
-    save_materias(materias)
+    save_materias(paths, materias)
     return materias[idx]
 
 
 @app.delete("/api/materias/{materia_id}")
-def api_borrar_materia(materia_id: str):
-    materias = load_materias()
+def api_borrar_materia(materia_id: str, usuario: dict = Depends(get_usuario_actual)):
+    paths = paths_for(usuario["id"])
+    materias = load_materias(paths)
     restantes = [m for m in materias if m["id"] != materia_id]
     if len(restantes) == len(materias):
         raise HTTPException(status_code=404, detail="Materia no encontrada")
-    save_materias(restantes)
+    save_materias(paths, restantes)
     return {"ok": True}
 
 
 @app.post("/api/semestre/nuevo")
-def api_nuevo_semestre(payload: NuevoSemestreInput = NuevoSemestreInput()):
+def api_nuevo_semestre(payload: NuevoSemestreInput = NuevoSemestreInput(), usuario: dict = Depends(get_usuario_actual)):
+    paths = paths_for(usuario["id"])
     etiqueta = (payload.etiqueta or datetime.now().strftime("%Y-%m-%d")).strip()
     archivado_como = None
-    if MATERIAS_FILE.exists():
+    if paths.materias_file.exists():
         archivado_como = f"materias_{etiqueta}.json"
-        MATERIAS_FILE.rename(DATA_DIR / archivado_como)
-    save_materias([])
+        paths.materias_file.rename(paths.root / archivado_como)
+    save_materias(paths, [])
     return {"ok": True, "archivado_como": archivado_como}
 
 
 @app.get("/api/fichas")
-def api_fichas(materia: Optional[str] = None):
-    fichas = list_fichas()
+def api_fichas(materia: Optional[str] = None, usuario: dict = Depends(get_usuario_actual)):
+    fichas = list_fichas(paths_for(usuario["id"]))
     if materia:
         fichas = [f for f in fichas if f["materia_id"] == materia]
     return fichas
 
 
 @app.get("/api/fichas/{ficha_id}")
-def api_ficha_detalle(ficha_id: str):
-    path = TRANSCRIPTS_DIR / f"{ficha_id}.txt"
+def api_ficha_detalle(ficha_id: str, usuario: dict = Depends(get_usuario_actual)):
+    paths = paths_for(usuario["id"])
+    path = paths.transcripts / f"{ficha_id}.txt"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Ficha no encontrada")
-    ficha = load_ficha(path)
+    ficha = load_ficha(path, load_materias(paths))
     ficha["contenido_crudo"] = path.read_text(encoding="utf-8", errors="replace")
     return ficha
 
 
 @app.get("/api/repaso")
-def api_repaso():
-    if not REPASO_FILE.exists():
+def api_repaso(usuario: dict = Depends(get_usuario_actual)):
+    repaso_file = paths_for(usuario["id"]).repaso_file
+    if not repaso_file.exists():
         return {"disponible": False, "fecha": date.today().isoformat(), "materias": []}
     try:
-        data = json.loads(REPASO_FILE.read_text(encoding="utf-8"))
+        data = json.loads(repaso_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         raise HTTPException(status_code=500, detail="repaso_hoy.json inválido")
     if isinstance(data, dict):
@@ -533,14 +717,14 @@ def read_brightspace_materia(carpeta: Path) -> dict:
     return {"modulos": modulos, "entregas": entregas}
 
 
-def list_brightspace(materias: Optional[list[dict]] = None) -> list[dict]:
-    materias = materias if materias is not None else load_materias()
+def list_brightspace(paths: Paths, materias: Optional[list[dict]] = None) -> list[dict]:
+    materias = materias if materias is not None else load_materias(paths)
     resultado = []
-    if not BRIGHTSPACE_DIR.exists():
+    if not paths.brightspace.exists():
         return resultado
 
     vistos = set()
-    for carpeta in sorted(p for p in BRIGHTSPACE_DIR.iterdir() if p.is_dir()):
+    for carpeta in sorted(p for p in paths.brightspace.iterdir() if p.is_dir()):
         nombre_materia = carpeta.name.replace("_", " ")
         subject = resolve_subject(nombre_materia, materias)
         datos = read_brightspace_materia(carpeta)
@@ -558,7 +742,7 @@ def list_brightspace(materias: Optional[list[dict]] = None) -> list[dict]:
     # Compatibilidad con el formato viejo: un archivo suelto "<materia>.json"
     # con la misma forma que dropbox.json, para materias que aun no tienen
     # su carpeta con el export nuevo.
-    for path in sorted(BRIGHTSPACE_DIR.glob("*.json")):
+    for path in sorted(paths.brightspace.glob("*.json")):
         if path.stem in vistos:
             continue
         try:
@@ -582,19 +766,20 @@ def list_brightspace(materias: Optional[list[dict]] = None) -> list[dict]:
 
 
 @app.get("/api/brightspace")
-def api_brightspace(materia: Optional[str] = None):
-    resultado = list_brightspace()
+def api_brightspace(materia: Optional[str] = None, usuario: dict = Depends(get_usuario_actual)):
+    resultado = list_brightspace(paths_for(usuario["id"]))
     if materia:
         resultado = [r for r in resultado if r["materia_id"] == materia]
     return resultado
 
 
 @app.get("/api/calendario")
-def api_calendario():
+def api_calendario(usuario: dict = Depends(get_usuario_actual)):
+    paths = paths_for(usuario["id"])
     eventos = []
-    materias = load_materias()
+    materias = load_materias(paths)
 
-    for ficha in list_fichas():
+    for ficha in list_fichas(paths, materias):
         subject = next((s for s in materias if s["id"] == ficha["materia_id"]), SUBJECT_FALLBACK)
         if ficha.get("fecha"):
             eventos.append({
@@ -621,7 +806,7 @@ def api_calendario():
                 "origen": ficha["id"],
             })
 
-    for materia_data in list_brightspace(materias):
+    for materia_data in list_brightspace(paths, materias):
         for entrega in materia_data["entregas"]:
             if not entrega["fecha_entrega"]:
                 continue
@@ -641,12 +826,17 @@ def api_calendario():
 
 
 @app.post("/api/audio")
-async def api_audio(file: UploadFile = File(...), materia: Optional[str] = Form(None)):
-    AUDIO_INBOX_DIR.mkdir(parents=True, exist_ok=True)
+async def api_audio(
+    file: UploadFile = File(...),
+    materia: Optional[str] = Form(None),
+    usuario: dict = Depends(get_usuario_actual),
+):
+    audio_inbox = paths_for(usuario["id"]).audio_inbox
+    audio_inbox.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     suffix = Path(file.filename or "grabacion.webm").suffix or ".webm"
     materia_slug = re.sub(r"[^a-z0-9]+", "-", _normalize(materia)).strip("-") if materia else "sin-materia"
-    destino = AUDIO_INBOX_DIR / f"{timestamp}_{materia_slug}{suffix}"
+    destino = audio_inbox / f"{timestamp}_{materia_slug}{suffix}"
 
     with destino.open("wb") as out:
         shutil.copyfileobj(file.file, out)
@@ -659,11 +849,11 @@ async def api_audio(file: UploadFile = File(...), materia: Optional[str] = Form(
     }
 
 
-def list_talleres_generados() -> list[dict]:
-    if not TALLER_GENERADOS_DIR.exists():
+def list_talleres_generados(paths: Paths) -> list[dict]:
+    if not paths.talleres_generados.exists():
         return []
     talleres = []
-    for path in TALLER_GENERADOS_DIR.glob("*.json"):
+    for path in paths.talleres_generados.glob("*.json"):
         try:
             talleres.append(json.loads(path.read_text(encoding="utf-8")))
         except json.JSONDecodeError:
@@ -673,7 +863,7 @@ def list_talleres_generados() -> list[dict]:
 
 
 @app.get("/api/talleres")
-def api_talleres():
+def api_talleres(usuario: dict = Depends(get_usuario_actual)):
     return [
         {
             "id": t.get("id"),
@@ -682,13 +872,13 @@ def api_talleres():
             "materias": t.get("materias", []),
             "num_items": len(t.get("preguntas") or t.get("ejercicios") or []),
         }
-        for t in list_talleres_generados()
+        for t in list_talleres_generados(paths_for(usuario["id"]))
     ]
 
 
 @app.get("/api/talleres/{taller_id}")
-def api_taller_detalle(taller_id: str):
-    path = TALLER_GENERADOS_DIR / f"{taller_id}.json"
+def api_taller_detalle(taller_id: str, usuario: dict = Depends(get_usuario_actual)):
+    path = paths_for(usuario["id"]).talleres_generados / f"{taller_id}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Taller no encontrado")
     try:
@@ -745,8 +935,9 @@ class RespuestaTallerInput(BaseModel):
 
 
 @app.post("/api/talleres/{taller_id}/responder")
-def api_taller_responder(taller_id: str, payload: RespuestaTallerInput):
-    path = TALLER_GENERADOS_DIR / f"{taller_id}.json"
+def api_taller_responder(taller_id: str, payload: RespuestaTallerInput, usuario: dict = Depends(get_usuario_actual)):
+    paths = paths_for(usuario["id"])
+    path = paths.talleres_generados / f"{taller_id}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Taller no encontrado")
     taller = json.loads(path.read_text(encoding="utf-8"))
@@ -767,6 +958,7 @@ def api_taller_responder(taller_id: str, payload: RespuestaTallerInput):
         subprocess.run(
             [
                 "python3", str(REGISTRAR_DESEMPENO_SCRIPT),
+                "--data-dir", str(paths.root),
                 "--materia", pregunta["materia_id"],
                 "--tema", pregunta["tema"],
                 "--resultado", resultado,
@@ -810,8 +1002,9 @@ class GenerarDescargableInput(BaseModel):
 
 
 @app.post("/api/talleres/generar-descargable")
-def api_generar_taller_descargable(payload: GenerarDescargableInput):
-    materias = load_materias()
+def api_generar_taller_descargable(payload: GenerarDescargableInput, usuario: dict = Depends(get_usuario_actual)):
+    paths = paths_for(usuario["id"])
+    materias = load_materias(paths)
     materia = next((m for m in materias if m["id"] == payload.materia_id), None)
     if not materia:
         raise HTTPException(status_code=404, detail="Materia no encontrada")
@@ -822,7 +1015,7 @@ def api_generar_taller_descargable(payload: GenerarDescargableInput):
         if not corte:
             raise HTTPException(status_code=404, detail="Corte no encontrado")
         if corte.get("fecha_inicio") and corte.get("fecha_fin"):
-            for ficha in list_fichas():
+            for ficha in list_fichas(paths, materias):
                 if (
                     ficha["materia_id"] == payload.materia_id
                     and ficha.get("fecha")
@@ -863,8 +1056,8 @@ def api_generar_taller_descargable(payload: GenerarDescargableInput):
             for i, e in enumerate(ejercicios)
         ],
     }
-    TALLER_GENERADOS_DIR.mkdir(parents=True, exist_ok=True)
-    (TALLER_GENERADOS_DIR / f"{taller_id}.json").write_text(
+    paths.talleres_generados.mkdir(parents=True, exist_ok=True)
+    (paths.talleres_generados / f"{taller_id}.json").write_text(
         json.dumps(taller, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return taller
@@ -894,8 +1087,9 @@ class GenerarInteractivoInput(BaseModel):
 
 
 @app.post("/api/talleres/generar-interactivo")
-def api_generar_taller_interactivo(payload: GenerarInteractivoInput):
-    materias = load_materias()
+def api_generar_taller_interactivo(payload: GenerarInteractivoInput, usuario: dict = Depends(get_usuario_actual)):
+    paths = paths_for(usuario["id"])
+    materias = load_materias(paths)
     materia = next((m for m in materias if m["id"] == payload.materia_id), None)
     if not materia:
         raise HTTPException(status_code=404, detail="Materia no encontrada")
@@ -906,7 +1100,7 @@ def api_generar_taller_interactivo(payload: GenerarInteractivoInput):
         if not corte:
             raise HTTPException(status_code=404, detail="Corte no encontrado")
         if corte.get("fecha_inicio") and corte.get("fecha_fin"):
-            for ficha in list_fichas():
+            for ficha in list_fichas(paths, materias):
                 if (
                     ficha["materia_id"] == payload.materia_id
                     and ficha.get("fecha")
@@ -918,7 +1112,7 @@ def api_generar_taller_interactivo(payload: GenerarInteractivoInput):
         # Sin temas ni corte especificos: usa todos los temas de todas las
         # fichas de esta materia, sin filtrar por fecha -- permite practicar
         # en cualquier momento, no solo lo que el scheduler marque vencido.
-        for ficha in list_fichas():
+        for ficha in list_fichas(paths, materias):
             if ficha["materia_id"] == payload.materia_id:
                 temas.extend(ficha.get("temas", []))
     temas = list(dict.fromkeys(temas))
@@ -951,15 +1145,15 @@ def api_generar_taller_interactivo(payload: GenerarInteractivoInput):
             for i, p in enumerate(preguntas)
         ],
     }
-    TALLER_GENERADOS_DIR.mkdir(parents=True, exist_ok=True)
-    (TALLER_GENERADOS_DIR / f"{taller_id}.json").write_text(
+    paths.talleres_generados.mkdir(parents=True, exist_ok=True)
+    (paths.talleres_generados / f"{taller_id}.json").write_text(
         json.dumps(taller, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return taller
 
 
-def _formatear_brightspace_context(materia_id: str) -> str:
-    for materia_data in list_brightspace():
+def _formatear_brightspace_context(paths: Paths, materia_id: str) -> str:
+    for materia_data in list_brightspace(paths):
         if materia_data["materia_id"] != materia_id:
             continue
         partes = [f"- {modulo['titulo']}" for modulo in materia_data["modulos"]]
@@ -983,15 +1177,19 @@ def _renderizar_process_md(materia: dict, fecha: str, transcript: str, brightspa
 
 
 def _procesar_audio_pendiente(path: Path) -> None:
+    # path = usuarios/<usuario_id>/audio_pendiente/<archivo>.webm
+    usuario_id = path.parent.parent.name
+    paths = paths_for(usuario_id)
+
     match_nombre = re.match(r"^(\d{4}-\d{2}-\d{2})T\d{2}-\d{2}-\d{2}_(.+)$", path.stem)
     if not match_nombre:
         print(f"[audio-watcher] nombre inesperado, se ignora: {path.name}")
         return
     fecha, materia_slug = match_nombre.group(1), match_nombre.group(2)
 
-    materia = next((m for m in load_materias() if m["id"] == materia_slug), None)
+    materia = next((m for m in load_materias(paths) if m["id"] == materia_slug), None)
     if not materia:
-        print(f"[audio-watcher] materia '{materia_slug}' no encontrada en materias.json, se deja pendiente")
+        print(f"[audio-watcher] materia '{materia_slug}' no encontrada en materias.json de '{usuario_id}', se deja pendiente")
         return
     if not TRANSCRIBE_SCRIPT.exists():
         print(f"[audio-watcher] transcribe.sh no encontrado en {TRANSCRIBE_SCRIPT}, se deja pendiente")
@@ -1018,12 +1216,12 @@ def _procesar_audio_pendiente(path: Path) -> None:
         return
     transcript = transcript_path.read_text(encoding="utf-8", errors="replace")
 
-    brightspace_context = _formatear_brightspace_context(materia["id"])
+    brightspace_context = _formatear_brightspace_context(paths, materia["id"])
     prompt = _renderizar_process_md(materia, fecha, transcript, brightspace_context)
     contenido = _llamar_ollama(prompt, "Genera la ficha según las instrucciones.", timeout=180)
 
-    ficha_path = TRANSCRIPTS_DIR / f"{fecha}_{materia['nombre'].replace(' ', '_')}.txt"
-    TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+    ficha_path = paths.transcripts / f"{fecha}_{materia['nombre'].replace(' ', '_')}.txt"
+    paths.transcripts.mkdir(parents=True, exist_ok=True)
     ficha_path.write_text(contenido, encoding="utf-8")
 
     # El transcript crudo de transcribe.sh era solo un paso intermedio -- no
@@ -1032,16 +1230,16 @@ def _procesar_audio_pendiente(path: Path) -> None:
     if transcript_path.exists() and transcript_path != ficha_path:
         transcript_path.unlink(missing_ok=True)
 
-    AUDIO_PROCESADOS_DIR.mkdir(parents=True, exist_ok=True)
-    path.rename(AUDIO_PROCESADOS_DIR / path.name)
-    print(f"[audio-watcher] ficha generada: {ficha_path.name}")
+    paths.audio_procesados.mkdir(parents=True, exist_ok=True)
+    path.rename(paths.audio_procesados / path.name)
+    print(f"[audio-watcher] ficha generada para '{usuario_id}': {ficha_path.name}")
 
 
 async def _audio_watcher_loop():
     while True:
         try:
-            if AUDIO_INBOX_DIR.exists():
-                for path in sorted(AUDIO_INBOX_DIR.glob("*.webm")):
+            if USUARIOS_DIR.exists():
+                for path in sorted(USUARIOS_DIR.glob("*/audio_pendiente/*.webm")):
                     # _procesar_audio_pendiente es sincrona y bloqueante
                     # (subprocess de Whisper, llamada HTTP a Ollama). Correrla
                     # directo aqui congelaria el unico hilo del event loop --
