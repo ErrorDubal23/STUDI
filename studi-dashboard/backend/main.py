@@ -301,23 +301,32 @@ def resolve_subject(materia_text: Optional[str], materias: list[dict]) -> dict:
 # Ficha parsing
 # ---------------------------------------------------------------------------
 
-# Known header fields at the top of a ficha .txt, "Campo: valor" style.
+# Known header fields at the top of a ficha .txt, "Campo: valor" style --
+# solo Materia/Fecha/Temas siguen viniendo asi, son criticas para clasificar
+# la ficha y no se tocan.
 FIELD_ALIASES = {
     "materia": "materia",
     "fecha": "fecha",
     "temas": "temas",
-    "brightspace": "brightspace",
     "taller pendiente": "taller_pendiente",
+}
+
+# El resto del cuerpo (Resumen, Terminos nuevos, Preguntas tipo parcial, etc.)
+# viene como encabezados Markdown reales (process.md ya los pide asi), no
+# como "Campo: valor" -- se mapea el texto del encabezado (normalizado, sin
+# emojis/parentesis como "(5 puntos clave)") al campo correspondiente.
+SECTION_ALIASES = {
     "resumen": "resumen",
-    "terminos": "terminos",
-    "términos": "terminos",
-    "preguntas": "preguntas",
-    "duracion": "duracion",
-    "duración": "duracion",
+    "terminos nuevos": "terminos",
+    "material relacionado en brightspace": "brightspace",
+    "preguntas tipo parcial": "preguntas",
+    "conexiones con temas anteriores": "conexiones",
+    "fechas detectadas": "fechas_texto",
 }
 
 DATE_PATTERN = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
-LIST_FIELDS = {"temas", "terminos", "preguntas"}
+HEADING_PATTERN = re.compile(r"^#{1,6}\s*(.+)$")
+LIST_FIELDS = {"temas"}
 
 
 def _split_list_value(value: str) -> list[str]:
@@ -325,21 +334,30 @@ def _split_list_value(value: str) -> list[str]:
     return [p.strip(" -\t") for p in parts if p.strip(" -\t")]
 
 
+def _match_section(heading_text: str) -> Optional[str]:
+    norm = _normalize(re.sub(r"\(.*?\)", "", heading_text))
+    for key, campo in SECTION_ALIASES.items():
+        if norm.startswith(key):
+            return campo
+    return None
+
+
 def parse_ficha(raw_text: str, materias: list[dict]) -> dict:
     lines = raw_text.splitlines()
     fields: dict = {}
-    body_lines: list[str] = []
+    sections: dict[str, list[str]] = {}
 
     current_field = None
+    current_section = None
     for line in lines:
-        # A blank line or a Markdown heading always closes whatever "Campo:"
-        # field was open -- otherwise a LIST_FIELDS field (e.g. "Temas:")
-        # keeps swallowing every following line, including headings and
-        # bullet points, as if they were more list items.
-        if not line.strip() or line.lstrip().startswith("#"):
+        heading_match = HEADING_PATTERN.match(line.strip()) if line.lstrip().startswith("#") else None
+        if heading_match:
             current_field = None
-            if line.strip():
-                body_lines.append(line.strip())
+            current_section = _match_section(heading_match.group(1))
+            continue
+
+        if not line.strip():
+            current_field = None
             continue
 
         match = re.match(r"^([A-Za-zÁÉÍÓÚÑáéíóúñ ]+):\s?(.*)$", line)
@@ -348,40 +366,47 @@ def parse_ficha(raw_text: str, materias: list[dict]) -> dict:
         if alias:
             current_field = alias
             value = match.group(2).strip()
-            if alias in LIST_FIELDS:
-                fields[alias] = _split_list_value(value) if value else []
-            else:
-                fields[alias] = value
-        elif match:
-            # Looks like a "Campo: valor" line but for a field we don't
-            # track (e.g. "Tarea:") -- still ends whatever field was open,
-            # so its value doesn't get swallowed as more items of the
-            # previous field.
+            fields[alias] = _split_list_value(value) if alias in LIST_FIELDS else value
+            if alias == "temas":
+                # Cualquier linea suelta entre "Temas:" y el primer
+                # encabezado real cae en "resumen" como respaldo, igual que
+                # antes de que hubiera secciones con nombre.
+                current_section = "resumen"
+            continue
+        if match:
+            # "Campo:" con nombre que no reconocemos (ej. "Tarea:") -- cierra
+            # el campo abierto para que no se le peguen mas lineas.
             current_field = None
-        elif current_field:
-            # Continuation of a multi-line field (e.g. a long "Resumen:").
+            continue
+        if current_field:
             if current_field in LIST_FIELDS:
                 fields[current_field].extend(_split_list_value(line))
             else:
                 fields[current_field] = (fields.get(current_field, "") + " " + line.strip()).strip()
-        else:
-            body_lines.append(line.strip())
+            continue
+        if current_section:
+            sections.setdefault(current_section, []).append(line)
 
     fechas_detectadas = sorted(set(m.group(0) for m in DATE_PATTERN.finditer(raw_text)))
 
     subject = resolve_subject(fields.get("materia"), materias)
+
+    def seccion(nombre: str) -> Optional[str]:
+        contenido = "\n".join(sections.get(nombre, [])).strip()
+        return contenido or None
 
     return {
         "materia": fields.get("materia") or subject["nombre"],
         "materia_id": subject["id"],
         "fecha": fields.get("fecha"),
         "temas": fields.get("temas", []),
-        "brightspace": fields.get("brightspace"),
         "taller_pendiente": fields.get("taller_pendiente"),
-        "resumen": fields.get("resumen") or ("\n".join(body_lines) if body_lines else None),
-        "terminos": fields.get("terminos", []),
-        "preguntas": fields.get("preguntas", []),
-        "duracion": fields.get("duracion"),
+        "resumen": seccion("resumen"),
+        "terminos": seccion("terminos"),
+        "brightspace": seccion("brightspace"),
+        "preguntas": seccion("preguntas"),
+        "conexiones": seccion("conexiones"),
+        "fechas_texto": seccion("fechas_texto"),
         "fechas_detectadas": fechas_detectadas,
     }
 

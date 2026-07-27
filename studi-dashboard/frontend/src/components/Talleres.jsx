@@ -1,43 +1,16 @@
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkMath from "remark-math";
-import rehypeKatex from "rehype-katex";
-import "katex/dist/katex.min.css";
 import { api } from "../lib/api.js";
 import { useMaterias, useSubjectById } from "../lib/MateriasContext.jsx";
-import { SubjectDot, SubjectChip, StateMessage, Card } from "./ui.jsx";
+import { SubjectDot, SubjectChip, StateMessage, Card, Markdown } from "./ui.jsx";
 import { TAP_PRESS } from "../lib/motion.js";
 import { IconChevron } from "./Icons.jsx";
-
-const KATEX_OPTIONS = { throwOnError: false, strict: false };
 
 const BADGES = {
   domina: { texto: "Dominado", color: "#0ca30c" },
   parcial: { texto: "A medio camino", color: "#c98500" },
   fallo: { texto: "Sigue practicando", color: "#d03b3b" },
 };
-
-// remark-math solo reconoce delimitadores $...$ / $$...$$ -- Yoda a veces
-// escribe matematicas con delimitadores estilo LaTeX \( \) / \[ \], hay que
-// convertirlos antes de pasarle el texto a ReactMarkdown.
-function normalizarDelimitadoresMatematicos(texto) {
-  return texto
-    .replace(/\\\[/g, "$$")
-    .replace(/\\\]/g, "$$")
-    .replace(/\\\(/g, "$")
-    .replace(/\\\)/g, "$");
-}
-
-function Markdown({ children }) {
-  return (
-    <div className="text-[14px] leading-relaxed [&_.katex]:text-[15px]">
-      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[[rehypeKatex, KATEX_OPTIONS]]}>
-        {normalizarDelimitadoresMatematicos(children)}
-      </ReactMarkdown>
-    </div>
-  );
-}
 
 function formatFechaHora(iso) {
   if (!iso) return "";

@@ -2,8 +2,17 @@ import { motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api.js";
 import { useMaterias } from "../lib/MateriasContext.jsx";
-import { SubjectChip, SubjectDot, StateMessage, Accordion } from "./ui.jsx";
+import { SubjectChip, SubjectDot, StateMessage, Accordion, Markdown } from "./ui.jsx";
 import { TAP_PRESS } from "../lib/motion.js";
+
+const SECCIONES = [
+  { campo: "resumen", etiqueta: "Resumen" },
+  { campo: "terminos", etiqueta: "Términos nuevos" },
+  { campo: "preguntas", etiqueta: "Preguntas tipo parcial" },
+  { campo: "conexiones", etiqueta: "Conexiones" },
+  { campo: "brightspace", etiqueta: "Brightspace" },
+  { campo: "fechas_texto", etiqueta: "Fechas detectadas" },
+];
 
 function formatFecha(fecha) {
   if (!fecha) return "Sin fecha";
@@ -125,13 +134,7 @@ export default function Fichas() {
               </div>
             }
           >
-            <div className="flex flex-col gap-3 text-[13px]">
-              {ficha.resumen && (
-                <div>
-                  <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-ink-muted">Resumen</p>
-                  <p className="text-ink-secondary dark:text-ink-dark-secondary">{ficha.resumen}</p>
-                </div>
-              )}
+            <div className="flex flex-col gap-3.5 text-[13px] text-ink-secondary dark:text-ink-dark-secondary">
               {ficha.temas?.length > 0 && (
                 <div>
                   <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-ink-muted">Temas</p>
@@ -144,31 +147,14 @@ export default function Fichas() {
                   </div>
                 </div>
               )}
-              {ficha.terminos?.length > 0 && (
-                <div>
-                  <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-ink-muted">Términos</p>
-                  <ul className="list-disc space-y-0.5 pl-4 text-ink-secondary dark:text-ink-dark-secondary">
-                    {ficha.terminos.map((t) => (
-                      <li key={t}>{t}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {ficha.preguntas?.length > 0 && (
-                <div>
-                  <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-ink-muted">Preguntas</p>
-                  <ul className="list-disc space-y-0.5 pl-4 text-ink-secondary dark:text-ink-dark-secondary">
-                    {ficha.preguntas.map((p) => (
-                      <li key={p}>{p}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {ficha.brightspace && (
-                <div>
-                  <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-ink-muted">Brightspace</p>
-                  <p className="text-ink-secondary dark:text-ink-dark-secondary">{ficha.brightspace}</p>
-                </div>
+              {SECCIONES.map(
+                ({ campo, etiqueta }) =>
+                  ficha[campo] && (
+                    <div key={campo}>
+                      <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-ink-muted">{etiqueta}</p>
+                      <Markdown>{ficha[campo]}</Markdown>
+                    </div>
+                  )
               )}
             </div>
           </Accordion>

@@ -1,7 +1,40 @@
 import { AnimatePresence, motion } from "framer-motion";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import { useSubjectById } from "../lib/MateriasContext.jsx";
 import { SPRING_SNAPPY, SPRING_SOFT, TAP_PRESS } from "../lib/motion.js";
 import { IconChevron } from "./Icons.jsx";
+
+const KATEX_OPTIONS = { throwOnError: false, strict: false };
+
+// remark-math solo reconoce delimitadores $...$ / $$...$$ -- Yoda a veces
+// escribe matematicas con delimitadores estilo LaTeX \( \) / \[ \], hay que
+// convertirlos antes de pasarle el texto a ReactMarkdown.
+function normalizarDelimitadoresMatematicos(texto) {
+  return texto
+    .replace(/\\\[/g, "$$")
+    .replace(/\\\]/g, "$$")
+    .replace(/\\\(/g, "$")
+    .replace(/\\\)/g, "$");
+}
+
+export function Markdown({ children }) {
+  return (
+    <div
+      className="text-[14px] leading-relaxed [&_.katex]:text-[15px]
+      [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-4
+      [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-4
+      [&_p]:mb-1.5 [&_p:last-child]:mb-0
+      [&_strong]:font-semibold [&_strong]:text-ink dark:[&_strong]:text-ink-dark"
+    >
+      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[[rehypeKatex, KATEX_OPTIONS]]}>
+        {normalizarDelimitadoresMatematicos(children)}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 export function SubjectDot({ materiaId, className = "h-2.5 w-2.5" }) {
   const subject = useSubjectById(materiaId);
