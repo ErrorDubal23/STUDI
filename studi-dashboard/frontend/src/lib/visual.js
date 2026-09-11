@@ -47,3 +47,20 @@ export const PALETA_CHIPS = [
   "#c07d1a", // ambar
   "#1a9fb0", // teal
 ];
+
+// Colores por materia -- se asignan solos al crear (rotando por indice),
+// en vez de pedirle al usuario que elija 2 tonos a mano cada vez.
+export const PALETA_MATERIAS = [
+  { light: "#2a78d6", dark: "#3987e5" }, // azul
+  { light: "#1baf7a", dark: "#22c98c" }, // verde
+  { light: "#eda100", dark: "#f5b52e" }, // amarillo
+  { light: "#008300", dark: "#2ba82b" }, // verde oscuro
+  { light: "#7448c4", dark: "#8a5fe0" }, // violeta
+  { light: "#d03b3b", dark: "#e2554f" }, // rojo
+  { light: "#1a9fb0", dark: "#30bdd0" }, // teal
+  { light: "#c05a8f", dark: "#d876ab" }, // rosa
+];
+
+export function siguienteColorMateria(materiasExistentes) {
+  return PALETA_MATERIAS[materiasExistentes.length % PALETA_MATERIAS.length];
+}

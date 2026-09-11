@@ -1,11 +1,12 @@
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/AuthContext.jsx";
 import { useMaterias } from "../lib/MateriasContext.jsx";
-import { TAP_PRESS } from "../lib/motion.js";
+import { SPRING_SNAPPY, SPRING_SOFT, TAP_PRESS } from "../lib/motion.js";
+import { siguienteColorMateria } from "../lib/visual.js";
 import { SubjectIconBadge, Card, Accordion, StateMessage } from "./ui.jsx";
-import { IconTrash, IconPlus } from "./Icons.jsx";
+import { IconTrash, IconPlus, IconChevron } from "./Icons.jsx";
 
 const DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const TIPOS_CORTE = [
@@ -18,18 +19,56 @@ const TIPOS_CORTE = [
 const inputClass =
   "w-full rounded-xl border border-hairline bg-transparent px-3 py-2 text-[14px] dark:border-hairline-dark dark:text-ink-dark";
 
-function vacia() {
+function vacia(materiasExistentes) {
+  const color = siguienteColorMateria(materiasExistentes);
   return {
     nombre: "",
     codigo: "",
     nrc: "",
     profesor: "",
-    color_light: "#2a78d6",
-    color_dark: "#3987e5",
+    color_light: color.light,
+    color_dark: color.dark,
     horario: [],
     cortes: [],
     es_extracurricular: false,
   };
+}
+
+// Seccion plegable liviana (sin el Card/borde de <Accordion>, que aca
+// dentro de un formulario ya anidado en una tarjeta se ve como "caja
+// dentro de caja") -- solo para lo opcional/menos usado (Cortes).
+function SeccionPlegable({ titulo, subtitulo, abierta, onToggle, children }) {
+  return (
+    <div>
+      <motion.button
+        type="button"
+        whileTap={TAP_PRESS}
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-2 py-1 text-left"
+      >
+        <div>
+          <span className="text-[10px] uppercase tracking-[0.14em] text-ink-muted">{titulo}</span>
+          {subtitulo && <p className="text-[11px] text-ink-muted">{subtitulo}</p>}
+        </div>
+        <motion.span animate={{ rotate: abierta ? 90 : 0 }} transition={SPRING_SNAPPY}>
+          <IconChevron className="h-3.5 w-3.5 text-ink-muted" />
+        </motion.span>
+      </motion.button>
+      <AnimatePresence initial={false}>
+        {abierta && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={SPRING_SOFT}
+            className="overflow-hidden"
+          >
+            <div className="pt-2">{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
 }
 
 function GenerarDescargableBoton({ materiaId, corte }) {
@@ -73,6 +112,7 @@ function GenerarDescargableBoton({ materiaId, corte }) {
 
 function MateriaForm({ materiaId, inicial, onGuardar, onCancelar, onBorrar, guardando }) {
   const [form, setForm] = useState(inicial);
+  const [cortesAbiertos, setCortesAbiertos] = useState(false);
 
   function set(campo, valor) {
     setForm((f) => ({ ...f, [campo]: valor }));
@@ -110,32 +150,10 @@ function MateriaForm({ materiaId, inicial, onGuardar, onCancelar, onBorrar, guar
         <input className={inputClass} value={form.nombre} onChange={(e) => set("nombre", e.target.value)} placeholder="Ej. Algoritmos y Complejidad" />
       </label>
 
-      <div className="grid grid-cols-2 gap-3">
-        <label className="flex flex-col gap-1 text-[12px] text-ink-muted">
-          Código general
-          <input className={inputClass} value={form.codigo} onChange={(e) => set("codigo", e.target.value)} placeholder="Ej. IST4310" />
-        </label>
-        <label className="flex flex-col gap-1 text-[12px] text-ink-muted">
-          Código de curso (NRC)
-          <input className={inputClass} value={form.nrc} onChange={(e) => set("nrc", e.target.value)} placeholder="Ej. 2053" />
-        </label>
-      </div>
-
       <label className="flex flex-col gap-1 text-[12px] text-ink-muted">
         Profesor
         <input className={inputClass} value={form.profesor} onChange={(e) => set("profesor", e.target.value)} placeholder="Opcional" />
       </label>
-
-      <div className="grid grid-cols-2 gap-3">
-        <label className="flex flex-col gap-1 text-[12px] text-ink-muted">
-          Color (claro)
-          <input type="color" className="h-9 w-full rounded-lg" value={form.color_light} onChange={(e) => set("color_light", e.target.value)} />
-        </label>
-        <label className="flex flex-col gap-1 text-[12px] text-ink-muted">
-          Color (oscuro)
-          <input type="color" className="h-9 w-full rounded-lg" value={form.color_dark} onChange={(e) => set("color_dark", e.target.value)} />
-        </label>
-      </div>
 
       <label className="flex items-center gap-2 text-[13px]">
         <input type="checkbox" checked={form.es_extracurricular} onChange={(e) => set("es_extracurricular", e.target.checked)} />
@@ -169,9 +187,17 @@ function MateriaForm({ materiaId, inicial, onGuardar, onCancelar, onBorrar, guar
       </div>
 
       {!form.es_extracurricular && (
-        <div>
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-[0.14em] text-ink-muted">Cortes</span>
+        <SeccionPlegable
+          titulo="Cortes y fechas"
+          subtitulo={
+            form.cortes.length > 0
+              ? `${form.cortes.length} ${form.cortes.length === 1 ? "corte definido" : "cortes definidos"}`
+              : "Opcional — solo hace falta cuando quieras un taller descargable por corte"
+          }
+          abierta={cortesAbiertos}
+          onToggle={() => setCortesAbiertos((v) => !v)}
+        >
+          <div className="mb-2 flex justify-end">
             <motion.button type="button" whileTap={TAP_PRESS} onClick={agregarCorte} className="flex items-center gap-1 text-[12px] text-ink-secondary dark:text-ink-dark-secondary">
               <IconPlus className="h-3.5 w-3.5" /> Agregar corte
             </motion.button>
@@ -202,7 +228,7 @@ function MateriaForm({ materiaId, inicial, onGuardar, onCancelar, onBorrar, guar
             ))}
             {form.cortes.length === 0 && <p className="text-[12px] text-ink-muted">Sin cortes definidos todavía.</p>}
           </div>
-        </div>
+        </SeccionPlegable>
       )}
 
       <div className="flex items-center justify-between pt-1">
@@ -248,9 +274,7 @@ function MateriaItem({ materia, abierta, onToggle, guardando, onGuardar, onCance
           <SubjectIconBadge materiaId={materia.id} className="h-9 w-9" />
           <div className="flex min-w-0 flex-col gap-0.5">
             <span className="truncate text-[14px] font-semibold">{materia.nombre}</span>
-            <span className="text-[12px] text-ink-muted">
-              {[materia.codigo, materia.nrc, materia.profesor].filter(Boolean).join(" · ") || "Sin datos adicionales"}
-            </span>
+            {materia.profesor && <span className="text-[12px] text-ink-muted">{materia.profesor}</span>}
             <span className="text-[12px] text-ink-muted">{resumenHorario(materia.horario)}</span>
           </div>
         </div>
@@ -368,7 +392,7 @@ export default function Materias() {
 
       {abierta === "__nueva__" && (
         <Card>
-          <MateriaForm inicial={vacia()} guardando={guardando} onGuardar={handleGuardarNueva} onCancelar={() => setAbierta(null)} />
+          <MateriaForm inicial={vacia(materias)} guardando={guardando} onGuardar={handleGuardarNueva} onCancelar={() => setAbierta(null)} />
         </Card>
       )}
 
