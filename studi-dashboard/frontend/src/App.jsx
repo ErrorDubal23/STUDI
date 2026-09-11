@@ -57,13 +57,17 @@ function AuthGate() {
 
 function AppShell() {
   const [activeTab, setActiveTab] = useState("inicio");
+  const [activeParams, setActiveParams] = useState(null);
   const [mostrarMas, setMostrarMas] = useState(false);
   const active = TODOS.find((t) => t.id === activeTab) ?? TODOS[0];
   const ActiveComponent = active.Component;
   const enSecundarios = SECUNDARIOS.some((t) => t.id === activeTab);
 
-  function irA(id) {
+  // params opcional -- ej. irA("talleres", { tallerId }) para saltar directo
+  // a un taller especifico en vez de solo cambiar de pestana.
+  function irA(id, params = null) {
     setActiveTab(id);
+    setActiveParams(params);
     setMostrarMas(false);
   }
 
@@ -87,7 +91,7 @@ function AppShell() {
         </header>
 
         <main className="relative z-[1] flex-1 overflow-y-auto px-4 pb-24 pt-3">
-          <ActiveComponent onNavegar={irA} />
+          <ActiveComponent onNavegar={irA} initialParams={activeParams} />
         </main>
 
         <AnimatePresence>

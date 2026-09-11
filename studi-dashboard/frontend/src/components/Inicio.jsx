@@ -30,23 +30,27 @@ function normalizeRepaso(data, materias) {
   });
 }
 
-function BotonGenerar({ bloque, subject, enviando, yaEnviado, onGenerar, variant = "pill" }) {
+function BotonGenerar({ bloque, subject, enviando, yaEnviado, onGenerar, onVerTaller, variant = "pill" }) {
   const gradiente = `linear-gradient(135deg, ${subject.colorLight}, ${tonoMasOscuro(subject.colorLight, 0.32)})`;
+  // Una vez generado, el boton pasa a ser la forma de LLEGAR al taller (no
+  // queda deshabilitado ni es solo un aviso de texto) -- eso es justo lo que
+  // faltaba: antes no habia manera de saber donde ver lo que se genero.
+  const accion = yaEnviado ? onVerTaller : onGenerar;
 
   if (variant === "bloque") {
     return (
       <motion.button
         type="button"
-        whileTap={enviando || yaEnviado ? undefined : TAP_PRESS}
-        disabled={enviando || yaEnviado}
-        onClick={onGenerar}
+        whileTap={enviando ? undefined : TAP_PRESS}
+        disabled={enviando}
+        onClick={accion}
         className="flex w-full items-center justify-between gap-3 rounded-2xl px-5 py-4 text-left text-white disabled:opacity-80"
         style={{ background: yaEnviado ? "linear-gradient(135deg, #1baf7a, #0f8a5c)" : gradiente }}
       >
         <div>
           <p className="text-[15px] font-semibold">{yaEnviado ? "Taller listo" : enviando ? "Generando…" : "Generar taller"}</p>
           <p className="text-[12px] text-white/80">
-            {yaEnviado ? "Búscalo en la pestaña Talleres" : "Crea un nuevo taller con los temas seleccionados"}
+            {yaEnviado ? "Ver taller" : "Crea un nuevo taller con los temas seleccionados"}
           </p>
         </div>
         {enviando ? (
@@ -68,13 +72,13 @@ function BotonGenerar({ bloque, subject, enviando, yaEnviado, onGenerar, variant
     return (
       <motion.button
         type="button"
-        whileTap={enviando || yaEnviado ? undefined : TAP_PRESS}
-        disabled={enviando || yaEnviado}
-        onClick={onGenerar}
+        whileTap={enviando ? undefined : TAP_PRESS}
+        disabled={enviando}
+        onClick={accion}
         className="flex w-full items-center justify-between gap-2 rounded-full border-[1.5px] px-4 py-2.5 text-left text-[13px] font-medium disabled:opacity-70"
         style={{ borderColor: conAlfa(subject.colorLight, 0.5), color: subject.colorLight }}
       >
-        {yaEnviado ? "Taller listo — mira Talleres" : enviando ? "Generando…" : "Generar taller"}
+        {yaEnviado ? "Ver taller" : enviando ? "Generando…" : "Generar taller"}
         {!enviando && <IconChevron className="h-4 w-4" />}
       </motion.button>
     );
@@ -83,15 +87,15 @@ function BotonGenerar({ bloque, subject, enviando, yaEnviado, onGenerar, variant
   return (
     <motion.button
       type="button"
-      whileTap={enviando || yaEnviado ? undefined : TAP_PRESS}
-      disabled={enviando || yaEnviado}
-      onClick={onGenerar}
+      whileTap={enviando ? undefined : TAP_PRESS}
+      disabled={enviando}
+      onClick={accion}
       className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium text-white disabled:opacity-70"
       style={{ backgroundColor: yaEnviado ? "#0ca30c" : subject.colorLight }}
     >
       {yaEnviado ? (
         <>
-          <IconCheck className="h-3.5 w-3.5" /> Listo
+          <IconCheck className="h-3.5 w-3.5" /> Ver taller
         </>
       ) : enviando ? (
         "Generando…"
@@ -102,7 +106,7 @@ function BotonGenerar({ bloque, subject, enviando, yaEnviado, onGenerar, variant
   );
 }
 
-function TarjetaDestacada({ bloque, subject, enviando, yaEnviado, onGenerar, onNavegar, variante }) {
+function TarjetaDestacada({ bloque, subject, enviando, yaEnviado, onGenerar, onVerTaller, onNavegar, variante }) {
   const { Ilustracion, frase } = pickIllustration(bloque.materiaId);
   const conFondoTintado = variante === "secundaria";
 
@@ -157,6 +161,7 @@ function TarjetaDestacada({ bloque, subject, enviando, yaEnviado, onGenerar, onN
           enviando={enviando}
           yaEnviado={yaEnviado}
           onGenerar={onGenerar}
+          onVerTaller={onVerTaller}
           variant={conFondoTintado ? "outline" : "bloque"}
         />
       </div>
@@ -171,6 +176,7 @@ export default function Inicio({ onNavegar }) {
   const [error, setError] = useState(null);
   const [enviando, setEnviando] = useState(null);
   const [enviados, setEnviados] = useState(new Set());
+  const [tallerIds, setTallerIds] = useState({});
   const [actualizando, setActualizando] = useState(false);
   const [conteos, setConteos] = useState({ fichas: null, talleres: null });
 
@@ -206,8 +212,9 @@ export default function Inicio({ onNavegar }) {
   async function generarTaller(bloque) {
     setEnviando(bloque.key);
     try {
-      await api.generarTallerInteractivo(bloque.materiaId, bloque.temas);
+      const resultado = await api.generarTallerInteractivo(bloque.materiaId, bloque.temas);
       setEnviados((prev) => new Set(prev).add(bloque.key));
+      setTallerIds((prev) => ({ ...prev, [bloque.key]: resultado.id }));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -333,6 +340,7 @@ export default function Inicio({ onNavegar }) {
             enviando={enviando === bloque.key}
             yaEnviado={enviados.has(bloque.key)}
             onGenerar={() => generarTaller(bloque)}
+            onVerTaller={onNavegar ? () => onNavegar("talleres", { tallerId: tallerIds[bloque.key] }) : undefined}
             onNavegar={onNavegar ? () => onNavegar("materias") : undefined}
             variante={idx === 0 ? "principal" : "secundaria"}
           />
@@ -360,6 +368,7 @@ export default function Inicio({ onNavegar }) {
                   enviando={enviando === bloque.key}
                   yaEnviado={enviados.has(bloque.key)}
                   onGenerar={() => generarTaller(bloque)}
+                  onVerTaller={onNavegar ? () => onNavegar("talleres", { tallerId: tallerIds[bloque.key] }) : undefined}
                   variant="pill"
                 />
               </Card>

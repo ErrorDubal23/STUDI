@@ -138,6 +138,40 @@ export function StatTile({ icon: Icon, label, value, color }) {
   );
 }
 
+// Barra de pestanas con una sola pastilla de fondo compartida via layoutId
+// (mismo patron que SubjectChip) -- para leer una seccion a la vez en vez de
+// apilar todo el contenido en un solo scroll largo.
+export function SegmentedTabs({ options, active, onChange, groupId = "tabs", accentColor }) {
+  return (
+    <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
+      {options.map((opt) => {
+        const isActive = opt.id === active;
+        return (
+          <motion.button
+            key={opt.id}
+            type="button"
+            whileTap={TAP_PRESS}
+            onClick={() => onChange(opt.id)}
+            className={`relative shrink-0 overflow-hidden rounded-full px-3.5 py-1.5 text-[12.5px] font-medium ${
+              isActive ? "text-white" : "text-ink-secondary dark:text-ink-dark-secondary"
+            }`}
+          >
+            {isActive && (
+              <motion.span
+                layoutId={`${groupId}-bg`}
+                transition={SPRING_SNAPPY}
+                className="absolute inset-0"
+                style={{ backgroundColor: accentColor || "#524f47" }}
+              />
+            )}
+            <span className="relative z-10">{opt.label}</span>
+          </motion.button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function StateMessage({ children }) {
   return (
     <div className="flex min-h-[40vh] items-center justify-center px-6 text-center text-[13px] text-ink-muted">

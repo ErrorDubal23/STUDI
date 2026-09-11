@@ -1004,6 +1004,7 @@ temas indicados, de dificultad media-alta a alta.
 Reglas:
 - Cada ejercicio debe tener datos o un enunciado específico para resolver,
   no una pregunta de opinión o de definición.
+- No cubras temas fuera de los indicados, aunque conozcas el tema en general.
 - Si el tema es matemático o lógico, usa notación LaTeX con delimitadores
   $...$ para inline y $$...$$ para bloques.
 - Ordena de menor a mayor dificultad.
@@ -1099,6 +1100,9 @@ Reglas:
 - Las preguntas deben hacer pensar, no solo memorizar -- nunca reveles la
   respuesta en el enunciado.
 - Máximo 2 preguntas por materia.
+- No cubras temas fuera de la lista dada, aunque conozcas el tema en
+  general -- si la lista trae 3 temas, las 5 preguntas se reparten entre
+  esos 3, nunca sobre un tema que no esté en la lista.
 - Responde ÚNICAMENTE con JSON válido, sin texto antes ni después, con
   este formato exacto:
   {"preguntas": [{"numero": 1, "materia_id": "<id>", "materia": "<nombre>", "tema": "<tema breve>", "pregunta": "<texto>"}]}
@@ -1134,18 +1138,35 @@ def api_generar_taller_interactivo(payload: GenerarInteractivoInput, usuario: di
                     temas.extend(ficha.get("temas", []))
 
     if not temas:
-        # Sin temas ni corte especificos: usa todos los temas de todas las
-        # fichas de esta materia, sin filtrar por fecha -- permite practicar
-        # en cualquier momento, no solo lo que el scheduler marque vencido.
-        for ficha in list_fichas(paths, materias):
-            if ficha["materia_id"] == payload.materia_id:
-                temas.extend(ficha.get("temas", []))
+        # Sin temas ni corte especificos: preferir los temas que el
+        # scheduler del servidor ya marco como pendientes/debiles hoy para
+        # esta materia (repaso_hoy.json) -- practicar lo que de verdad esta
+        # vencido, no un volcado de todo el historial. Solo si no hay nada
+        # ahi (o el archivo no existe) cae al fallback de usar todos los
+        # temas de todas las fichas de la materia.
+        if paths.repaso_file.exists():
+            try:
+                repaso_data = json.loads(paths.repaso_file.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                repaso_data = None
+            if isinstance(repaso_data, dict):
+                for bloque in repaso_data.get("materias", []):
+                    if bloque.get("materia_id") == payload.materia_id:
+                        temas.extend(bloque.get("temas", []))
+
+        if not temas:
+            for ficha in list_fichas(paths, materias):
+                if ficha["materia_id"] == payload.materia_id:
+                    temas.extend(ficha.get("temas", []))
     temas = list(dict.fromkeys(temas))
 
     if not temas:
         raise HTTPException(status_code=400, detail="No hay fichas con temas para esta materia todavía")
 
-    mensaje_usuario = f"Materia: {materia['nombre']}\nTemas disponibles: {', '.join(temas)}"
+    mensaje_usuario = (
+        f"Materia: {materia['nombre']}\n"
+        f"Temas a cubrir (usa EXCLUSIVAMENTE estos temas, no inventes ni agregues otros): {', '.join(temas)}"
+    )
     contenido = _llamar_ollama(TALLER_INTERACTIVO_SYSTEM_PROMPT, mensaje_usuario, timeout=60)
     try:
         preguntas = _extraer_json(contenido)["preguntas"]

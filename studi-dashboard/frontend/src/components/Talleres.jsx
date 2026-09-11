@@ -186,11 +186,11 @@ function TallerDetalle({ id, onVolver }) {
   );
 }
 
-export default function Talleres() {
+export default function Talleres({ initialParams }) {
   const { materias } = useMaterias();
   const [talleres, setTalleres] = useState(null);
   const [error, setError] = useState(null);
-  const [abierto, setAbierto] = useState(null);
+  const [abierto, setAbierto] = useState(initialParams?.tallerId ?? null);
   const [filtro, setFiltro] = useState(null);
 
   useEffect(() => {
