@@ -4,17 +4,117 @@ import { api } from "../lib/api.js";
 import { useMaterias, useSubjectById } from "../lib/MateriasContext.jsx";
 import { SPRING_SNAPPY, TAP_PRESS } from "../lib/motion.js";
 import { SubjectChip, Card } from "./ui.jsx";
-import { IconGrabar, IconStop, IconCheck } from "./Icons.jsx";
+import { IconGrabar, IconStop, IconCheck, IconFichas, IconTrash, IconPlus } from "./Icons.jsx";
 import * as recordingStore from "../lib/recordingStore.js";
 import { crearAudioMantenerActivo, destruirAudioMantenerActivo, solicitarWakeLock } from "../lib/keepAlive.js";
 
 const TIMESLICE_MS = 5000;
 const MAX_DURACION_SEGUNDOS = 100 * 60; // 1h40 — tope de seguridad
+const EXTENSIONES_MATERIAL = ".pdf,.txt,.md";
 
 function formatDuracion(segundos) {
   const m = Math.floor(segundos / 60);
   const s = segundos % 60;
   return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function formatFechaHora(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("es-CO", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+// Material de apoyo (diapositivas/PDFs/textos que da el profesor) como
+// entrada extra para generar talleres, ademas del audio. Vive en su propia
+// tarjeta debajo de la grabacion porque comparte la misma materia
+// seleccionada arriba -- no tiene sentido pedirla dos veces.
+function MaterialApoyo({ materiaId, subject }) {
+  const [materiales, setMateriales] = useState([]);
+  const [subiendo, setSubiendo] = useState(false);
+  const [progreso, setProgreso] = useState(0);
+  const [error, setError] = useState(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (!materiaId) return;
+    api.materiales(materiaId).then(setMateriales).catch(() => {});
+  }, [materiaId]);
+
+  async function alElegirArchivo(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !materiaId) return;
+    setError(null);
+    setSubiendo(true);
+    setProgreso(0);
+    try {
+      const resultado = await api.subirMaterial(file, materiaId, setProgreso);
+      setMateriales((prev) => [resultado, ...prev]);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubiendo(false);
+    }
+  }
+
+  async function borrar(material) {
+    try {
+      await api.borrarMaterial(material.id);
+      setMateriales((prev) => prev.filter((m) => m.id !== material.id));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <Card className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-[13px] font-semibold">Material de apoyo</p>
+          <p className="text-[11.5px] text-ink-muted">
+            Diapositivas o textos de la clase — se usan como referencia extra al generar talleres.
+          </p>
+        </div>
+        <motion.button
+          type="button"
+          whileTap={subiendo ? undefined : TAP_PRESS}
+          disabled={subiendo || !materiaId}
+          onClick={() => inputRef.current?.click()}
+          className="flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-medium text-white disabled:opacity-50"
+          style={{ backgroundColor: subject.colorLight }}
+        >
+          <IconPlus className="h-3.5 w-3.5" /> {subiendo ? `${progreso}%` : "Subir"}
+        </motion.button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept={EXTENSIONES_MATERIAL}
+          onChange={alElegirArchivo}
+          className="hidden"
+        />
+      </div>
+
+      {error && <p className="text-[12px] text-[#d03b3b]">{error}</p>}
+
+      {materiales.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          {materiales.map((m) => (
+            <div key={m.id} className="flex items-center gap-2 rounded-xl bg-hairline px-3 py-2 dark:bg-hairline-dark">
+              <IconFichas className="h-4 w-4 shrink-0 text-ink-muted" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[12.5px] font-medium">{m.nombre_original}</p>
+                <p className="text-[11px] text-ink-muted">{formatFechaHora(m.subido_en)}</p>
+              </div>
+              <motion.button type="button" whileTap={TAP_PRESS} onClick={() => borrar(m)} className="shrink-0 text-ink-muted">
+                <IconTrash className="h-4 w-4" />
+              </motion.button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
 }
 
 export default function Grabacion() {
@@ -336,6 +436,8 @@ export default function Grabacion() {
 
       {error && <p className="text-center text-[13px] text-[#d03b3b]">{error}</p>}
       {aviso && <p className="text-center text-[13px] text-ink-muted">{aviso}</p>}
+
+      <MaterialApoyo materiaId={materiaId} subject={subject} />
 
       {historial.length > 0 && (
         <div>

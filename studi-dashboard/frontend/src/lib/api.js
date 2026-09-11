@@ -93,6 +93,41 @@ export const api = {
       xhr.send(form);
     }),
 
+  materiales: (materiaId) => request(`/materiales${materiaId ? `?materia=${materiaId}` : ""}`),
+  borrarMaterial: (id) => request(`/materiales/${id}`, { method: "DELETE" }),
+  subirMaterial: (file, materiaId, onProgress) =>
+    new Promise((resolve, reject) => {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      form.append("materia", materiaId);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${BASE}/materiales`);
+      const token = localStorage.getItem(TOKEN_KEY);
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && onProgress) {
+          onProgress(Math.round((event.loaded / event.total) * 100));
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(JSON.parse(xhr.responseText));
+        } else {
+          if (xhr.status === 401) onUnauthorized?.();
+          let detalle;
+          try {
+            detalle = JSON.parse(xhr.responseText || "{}").detail;
+          } catch {
+            detalle = null;
+          }
+          reject(new Error(detalle || `Error ${xhr.status} subiendo el material`));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Error de red subiendo el material"));
+      xhr.send(form);
+    }),
+
   generarTallerInteractivo: (materiaId, temas) =>
     requestJSON("/talleres/generar-interactivo", {
       method: "POST",

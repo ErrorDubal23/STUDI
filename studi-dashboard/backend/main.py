@@ -90,6 +90,7 @@ class Paths:
     repaso_file: Path
     materias_file: Path
     desempeno_file: Path
+    material_apoyo: Path
 
 
 def paths_for(usuario_id: str) -> Paths:
@@ -105,6 +106,7 @@ def paths_for(usuario_id: str) -> Paths:
         repaso_file=root / "repaso_hoy.json",
         materias_file=root / "materias.json",
         desempeno_file=root / "desempeno.json",
+        material_apoyo=root / "material_apoyo",
     )
 
 
@@ -874,6 +876,131 @@ async def api_audio(
     }
 
 
+# -- Material de apoyo de clase (diapositivas/PDFs/textos que da el profesor) --
+# Entrada extra para la generacion de talleres, ademas del audio. Vive en
+# material_apoyo/<materia_id>/<timestamp>__<nombre-original>, un archivo por
+# subida -- el nombre codifica todo lo que hace falta, sin un indice/meta
+# aparte que se pueda desincronizar del archivo real.
+MATERIAL_EXTENSIONES_PERMITIDAS = {".pdf", ".txt", ".md"}
+MATERIAL_MAX_CHARS = 6000  # tope por materia para no inflar el prompt del taller
+
+
+def _slug_archivo(nombre: str) -> str:
+    limpio = re.sub(r"[^A-Za-z0-9._-]+", "-", nombre).strip("-")
+    return limpio or "archivo"
+
+
+def _extraer_texto_material(path: Path) -> str:
+    extension = path.suffix.lower()
+    if extension in {".txt", ".md"}:
+        return path.read_text(encoding="utf-8", errors="replace")
+    if extension == ".pdf":
+        try:
+            from pypdf import PdfReader
+
+            lector = PdfReader(str(path))
+            return "\n".join((pagina.extract_text() or "") for pagina in lector.pages)
+        except Exception:
+            return ""
+    return ""
+
+
+def list_materiales(paths: Paths, materia_id: Optional[str] = None) -> list[dict]:
+    base = paths.material_apoyo
+    if not base.exists():
+        return []
+    carpetas = [base / materia_id] if materia_id else [d for d in base.iterdir() if d.is_dir()]
+    resultados = []
+    for carpeta in carpetas:
+        if not carpeta.is_dir():
+            continue
+        for archivo in carpeta.iterdir():
+            if not archivo.is_file():
+                continue
+            match = re.match(r"^(\d{8}-\d{6})__(.+)$", archivo.name)
+            if not match:
+                continue
+            timestamp_raw, nombre_original = match.groups()
+            try:
+                subido_en = datetime.strptime(timestamp_raw, "%Y%m%d-%H%M%S").isoformat()
+            except ValueError:
+                subido_en = None
+            resultados.append({
+                "id": f"{carpeta.name}/{archivo.name}",
+                "materia_id": carpeta.name,
+                "nombre_original": nombre_original,
+                "subido_en": subido_en,
+            })
+    resultados.sort(key=lambda m: m["subido_en"] or "", reverse=True)
+    return resultados
+
+
+def _texto_material_apoyo(paths: Paths, materia_id: str) -> str:
+    carpeta = paths.material_apoyo / materia_id
+    if not carpeta.exists():
+        return ""
+    partes = []
+    total = 0
+    for archivo in sorted(carpeta.iterdir()):
+        if not archivo.is_file() or total >= MATERIAL_MAX_CHARS:
+            continue
+        texto = _extraer_texto_material(archivo).strip()
+        if not texto:
+            continue
+        disponible = MATERIAL_MAX_CHARS - total
+        partes.append(texto[:disponible])
+        total += len(texto[:disponible])
+    return "\n\n---\n\n".join(partes)
+
+
+@app.post("/api/materiales")
+async def api_subir_material(
+    materia: str = Form(...),
+    file: UploadFile = File(...),
+    usuario: dict = Depends(get_usuario_actual),
+):
+    paths = paths_for(usuario["id"])
+    materias = load_materias(paths)
+    if not any(m["id"] == materia for m in materias):
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+
+    extension = Path(file.filename or "").suffix.lower()
+    if extension not in MATERIAL_EXTENSIONES_PERMITIDAS:
+        raise HTTPException(status_code=400, detail="Solo se aceptan PDF, TXT o MD por ahora")
+
+    carpeta = paths.material_apoyo / materia
+    carpeta.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    nombre_seguro = _slug_archivo(file.filename or f"material{extension}")
+    destino = carpeta / f"{timestamp}__{nombre_seguro}"
+
+    with destino.open("wb") as out:
+        shutil.copyfileobj(file.file, out)
+
+    return {
+        "id": f"{materia}/{destino.name}",
+        "materia_id": materia,
+        "nombre_original": nombre_seguro,
+        "subido_en": datetime.now().isoformat(),
+    }
+
+
+@app.get("/api/materiales")
+def api_listar_materiales(materia: Optional[str] = None, usuario: dict = Depends(get_usuario_actual)):
+    return list_materiales(paths_for(usuario["id"]), materia)
+
+
+@app.delete("/api/materiales/{materia_id}/{nombre_archivo}")
+def api_borrar_material(materia_id: str, nombre_archivo: str, usuario: dict = Depends(get_usuario_actual)):
+    paths = paths_for(usuario["id"])
+    destino = (paths.material_apoyo / materia_id / nombre_archivo).resolve()
+    carpeta_materia = (paths.material_apoyo / materia_id).resolve()
+    if carpeta_materia not in destino.parents or not destino.is_file():
+        raise HTTPException(status_code=404, detail="Material no encontrado")
+    destino.unlink()
+    return {"ok": True}
+
+
 def list_talleres_generados(paths: Paths) -> list[dict]:
     if not paths.talleres_generados.exists():
         return []
@@ -1021,6 +1148,18 @@ def _extraer_json(texto: str) -> dict:
     return json.loads(texto)
 
 
+def _con_material_apoyo(mensaje_usuario: str, paths: Paths, materia_id: str) -> str:
+    material = _texto_material_apoyo(paths, materia_id)
+    if not material:
+        return mensaje_usuario
+    return (
+        f"{mensaje_usuario}\n\n"
+        f"Material de apoyo de la clase (diapositivas/notas subidas por el estudiante -- "
+        f"úsalo como referencia para preguntas más fieles a lo visto en clase, pero sigue "
+        f"respetando estrictamente la lista de temas de arriba):\n{material}"
+    )
+
+
 class GenerarDescargableInput(BaseModel):
     materia_id: str
     corte_id: Optional[str] = None
@@ -1057,6 +1196,7 @@ def api_generar_taller_descargable(payload: GenerarDescargableInput, usuario: di
         )
 
     mensaje_usuario = f"Materia: {materia['nombre']}\nTemas a cubrir: {', '.join(temas)}"
+    mensaje_usuario = _con_material_apoyo(mensaje_usuario, paths, payload.materia_id)
     contenido = _llamar_ollama(TALLER_DESCARGABLE_SYSTEM_PROMPT, mensaje_usuario, timeout=90)
     try:
         ejercicios = _extraer_json(contenido)["ejercicios"]
@@ -1167,6 +1307,7 @@ def api_generar_taller_interactivo(payload: GenerarInteractivoInput, usuario: di
         f"Materia: {materia['nombre']}\n"
         f"Temas a cubrir (usa EXCLUSIVAMENTE estos temas, no inventes ni agregues otros): {', '.join(temas)}"
     )
+    mensaje_usuario = _con_material_apoyo(mensaje_usuario, paths, payload.materia_id)
     contenido = _llamar_ollama(TALLER_INTERACTIVO_SYSTEM_PROMPT, mensaje_usuario, timeout=60)
     try:
         preguntas = _extraer_json(contenido)["preguntas"]
