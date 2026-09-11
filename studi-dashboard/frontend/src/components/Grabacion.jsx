@@ -5,6 +5,11 @@ import { useMaterias, useSubjectById } from "../lib/MateriasContext.jsx";
 import { SPRING_SNAPPY, TAP_PRESS } from "../lib/motion.js";
 import { SubjectChip, Card } from "./ui.jsx";
 import { IconGrabar, IconStop, IconCheck } from "./Icons.jsx";
+import * as recordingStore from "../lib/recordingStore.js";
+import { crearAudioMantenerActivo, destruirAudioMantenerActivo, solicitarWakeLock } from "../lib/keepAlive.js";
+
+const TIMESLICE_MS = 5000;
+const MAX_DURACION_SEGUNDOS = 100 * 60; // 1h40 — tope de seguridad
 
 function formatDuracion(segundos) {
   const m = Math.floor(segundos / 60);
@@ -19,37 +24,110 @@ export default function Grabacion() {
   const [duracion, setDuracion] = useState(0);
   const [progreso, setProgreso] = useState(0);
   const [error, setError] = useState(null);
+  const [aviso, setAviso] = useState(null);
   const [historial, setHistorial] = useState([]);
+  const [pendientes, setPendientes] = useState([]);
   const subject = useSubjectById(materiaId);
 
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
   const blobRef = useRef(null);
   const timerRef = useRef(null);
+  const sessionIdRef = useRef(null);
+  const keepAliveAudioRef = useRef(null);
+  const wakeLockRef = useRef(null);
+  const autoStopTimeoutRef = useRef(null);
+  const estadoRef = useRef(estado);
 
-  useEffect(() => () => clearInterval(timerRef.current), []);
+  useEffect(() => {
+    estadoRef.current = estado;
+  }, [estado]);
+
+  useEffect(
+    () => () => {
+      clearInterval(timerRef.current);
+      limpiarSoporteSegundoPlano();
+    },
+    []
+  );
 
   useEffect(() => {
     if (materiaId === null && materias.length > 0) setMateriaId(materias[0].id);
   }, [materiaId, materias]);
 
+  // Al abrir la app, si quedó una grabación sin terminar (la pestaña murió
+  // en segundo plano antes de poder subirla), la ofrecemos para recuperar.
+  useEffect(() => {
+    recordingStore.listarSesionesPendientes().then(setPendientes).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    async function alCambiarVisibilidad() {
+      if (document.visibilityState === "visible" && estadoRef.current === "grabando") {
+        wakeLockRef.current = await solicitarWakeLock();
+        keepAliveAudioRef.current?.play().catch(() => {});
+      }
+    }
+    document.addEventListener("visibilitychange", alCambiarVisibilidad);
+    return () => document.removeEventListener("visibilitychange", alCambiarVisibilidad);
+  }, []);
+
+  useEffect(() => {
+    function alOcultarPagina() {
+      if (estadoRef.current === "grabando") {
+        try {
+          mediaRecorderRef.current?.requestData();
+        } catch {
+          // best-effort: si la pagina se cierra ya se persistieron los
+          // chunks anteriores via el timeslice periodico.
+        }
+      }
+    }
+    window.addEventListener("pagehide", alOcultarPagina);
+    return () => window.removeEventListener("pagehide", alOcultarPagina);
+  }, []);
+
+  function limpiarSoporteSegundoPlano() {
+    clearTimeout(autoStopTimeoutRef.current);
+    wakeLockRef.current?.release().catch(() => {});
+    wakeLockRef.current = null;
+    destruirAudioMantenerActivo(keepAliveAudioRef.current);
+    keepAliveAudioRef.current = null;
+  }
+
   async function iniciarGrabacion() {
     setError(null);
+    setAviso(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
       chunksRef.current = [];
-      recorder.ondataavailable = (e) => chunksRef.current.push(e.data);
+      sessionIdRef.current = await recordingStore.crearSesion(materiaId);
+
+      recorder.ondataavailable = (e) => {
+        if (!e.data || e.data.size === 0) return;
+        chunksRef.current.push(e.data);
+        recordingStore.agregarFragmento(sessionIdRef.current, e.data).catch(() => {});
+      };
       recorder.onstop = () => {
         blobRef.current = new Blob(chunksRef.current, { type: "audio/webm" });
         stream.getTracks().forEach((t) => t.stop());
+        limpiarSoporteSegundoPlano();
         setEstado("listo");
       };
-      recorder.start();
+      recorder.start(TIMESLICE_MS);
       mediaRecorderRef.current = recorder;
       setDuracion(0);
       setEstado("grabando");
       timerRef.current = setInterval(() => setDuracion((d) => d + 1), 1000);
+
+      keepAliveAudioRef.current = crearAudioMantenerActivo();
+      keepAliveAudioRef.current.play().catch(() => {});
+      wakeLockRef.current = await solicitarWakeLock();
+      autoStopTimeoutRef.current = setTimeout(() => {
+        setAviso(`Se alcanzó el límite de seguridad de ${formatDuracion(MAX_DURACION_SEGUNDOS)}: la grabación se detuvo automáticamente.`);
+        detenerGrabacion();
+      }, MAX_DURACION_SEGUNDOS * 1000);
     } catch {
       setError("No se pudo acceder al micrófono. Revisa los permisos del navegador.");
     }
@@ -64,6 +142,10 @@ export default function Grabacion() {
     blobRef.current = null;
     setDuracion(0);
     setEstado("inactivo");
+    if (sessionIdRef.current) {
+      recordingStore.eliminarSesion(sessionIdRef.current).catch(() => {});
+      sessionIdRef.current = null;
+    }
   }
 
   async function subir() {
@@ -75,6 +157,10 @@ export default function Grabacion() {
       setHistorial((prev) => [{ ...resultado, materiaId, fecha: new Date() }, ...prev]);
       setEstado("subido");
       blobRef.current = null;
+      if (sessionIdRef.current) {
+        await recordingStore.eliminarSesion(sessionIdRef.current).catch(() => {});
+        sessionIdRef.current = null;
+      }
       setTimeout(() => setEstado("inactivo"), 1600);
     } catch (err) {
       setError(err.message);
@@ -82,10 +168,57 @@ export default function Grabacion() {
     }
   }
 
+  async function subirPendiente(sesion) {
+    try {
+      const fragmentos = await recordingStore.obtenerFragmentos(sesion.id);
+      const blob = new Blob(fragmentos, { type: "audio/webm" });
+      const resultado = await api.subirAudio(blob, sesion.materiaId, () => {});
+      setHistorial((prev) => [{ ...resultado, materiaId: sesion.materiaId, fecha: new Date() }, ...prev]);
+      await recordingStore.eliminarSesion(sesion.id);
+      setPendientes((prev) => prev.filter((p) => p.id !== sesion.id));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function descartarPendiente(sesion) {
+    await recordingStore.eliminarSesion(sesion.id).catch(() => {});
+    setPendientes((prev) => prev.filter((p) => p.id !== sesion.id));
+  }
+
   const grabando = estado === "grabando";
 
   return (
     <div className="flex flex-col gap-5">
+      {pendientes.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {pendientes.map((sesion) => (
+            <Card key={sesion.id} className="flex items-center justify-between gap-3 py-3">
+              <span className="text-[13px] text-ink-secondary dark:text-ink-dark-secondary">
+                Se encontró una grabación sin subir del{" "}
+                {new Date(sesion.startedAt).toLocaleString("es-CO")}
+              </span>
+              <div className="flex flex-shrink-0 gap-2">
+                <button
+                  type="button"
+                  onClick={() => descartarPendiente(sesion)}
+                  className="rounded-full border border-hairline px-3 py-1.5 text-[12px] text-ink-secondary dark:border-hairline-dark dark:text-ink-dark-secondary"
+                >
+                  Descartar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => subirPendiente(sesion)}
+                  className="rounded-full bg-ink px-3 py-1.5 text-[12px] font-medium text-white dark:bg-ink-dark"
+                >
+                  Subir
+                </button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
       <div>
         <p className="mb-2 text-[10px] uppercase tracking-[0.14em] text-ink-muted">Materia</p>
         <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
@@ -202,6 +335,7 @@ export default function Grabacion() {
       </Card>
 
       {error && <p className="text-center text-[13px] text-[#d03b3b]">{error}</p>}
+      {aviso && <p className="text-center text-[13px] text-ink-muted">{aviso}</p>}
 
       {historial.length > 0 && (
         <div>

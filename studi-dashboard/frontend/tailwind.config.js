@@ -27,6 +27,9 @@ export default {
       },
       fontFamily: {
         sans: ["system-ui", "-apple-system", "Segoe UI", "sans-serif"],
+        // Solo para acentos manuscritos puntuales (ver Inicio.jsx) -- el
+        // resto de la app se queda en system-ui a proposito.
+        script: ["Caveat", "cursive"],
       },
       boxShadow: {
         card: "0 1px 2px rgba(30,25,15,0.04), 0 10px 28px -10px rgba(30,25,15,0.14)",

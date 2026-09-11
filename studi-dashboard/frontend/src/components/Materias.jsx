@@ -4,7 +4,7 @@ import { api } from "../lib/api.js";
 import { useAuth } from "../lib/AuthContext.jsx";
 import { useMaterias } from "../lib/MateriasContext.jsx";
 import { TAP_PRESS } from "../lib/motion.js";
-import { SubjectDot, Card, Accordion, StateMessage } from "./ui.jsx";
+import { SubjectIconBadge, Card, Accordion, StateMessage } from "./ui.jsx";
 import { IconTrash, IconPlus } from "./Icons.jsx";
 
 const DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
@@ -244,15 +244,15 @@ function MateriaItem({ materia, abierta, onToggle, guardando, onGuardar, onCance
       onToggle={onToggle}
       accentColor={materia.colorLight}
       header={
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <div className="flex items-center gap-2 text-[14px] font-semibold">
-            <SubjectDot materiaId={materia.id} />
-            {materia.nombre}
+        <div className="flex min-w-0 items-center gap-3">
+          <SubjectIconBadge materiaId={materia.id} className="h-9 w-9" />
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="truncate text-[14px] font-semibold">{materia.nombre}</span>
+            <span className="text-[12px] text-ink-muted">
+              {[materia.codigo, materia.nrc, materia.profesor].filter(Boolean).join(" · ") || "Sin datos adicionales"}
+            </span>
+            <span className="text-[12px] text-ink-muted">{resumenHorario(materia.horario)}</span>
           </div>
-          <span className="text-[12px] text-ink-muted">
-            {[materia.codigo, materia.nrc, materia.profesor].filter(Boolean).join(" · ") || "Sin datos adicionales"}
-          </span>
-          <span className="text-[12px] text-ink-muted">{resumenHorario(materia.horario)}</span>
         </div>
       }
     >

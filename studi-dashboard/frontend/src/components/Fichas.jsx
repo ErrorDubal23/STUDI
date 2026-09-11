@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api.js";
 import { useMaterias } from "../lib/MateriasContext.jsx";
-import { SubjectChip, SubjectDot, StateMessage, Accordion, Markdown } from "./ui.jsx";
+import { SubjectChip, SubjectDot, StateMessage, Accordion, Markdown, TagChip } from "./ui.jsx";
 import { TAP_PRESS } from "../lib/motion.js";
 
 const SECCIONES = [
@@ -139,10 +139,10 @@ export default function Fichas() {
                 <div>
                   <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-ink-muted">Temas</p>
                   <div className="flex flex-wrap gap-1.5">
-                    {ficha.temas.map((tema) => (
-                      <span key={tema} className="rounded-full bg-hairline px-2 py-0.5 text-[12px] dark:bg-hairline-dark">
+                    {ficha.temas.map((tema, idx) => (
+                      <TagChip key={tema} index={idx}>
                         {tema}
-                      </span>
+                      </TagChip>
                     ))}
                   </div>
                 </div>

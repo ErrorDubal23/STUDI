@@ -1,4 +1,6 @@
 // Minimal stroke icons, no emoji, no external icon library.
+import { elegirPorHash } from "../lib/visual.js";
+
 const base = {
   fill: "none",
   stroke: "currentColor",
@@ -7,6 +9,16 @@ const base = {
   strokeLinejoin: "round",
   viewBox: "0 0 24 24",
 };
+
+export function IconInicio({ className }) {
+  return (
+    <svg className={className} {...base}>
+      <path d="M4 11.5 12 4l8 7.5" />
+      <path d="M6 10v8.5A1.5 1.5 0 0 0 7.5 20h9a1.5 1.5 0 0 0 1.5-1.5V10" />
+      <path d="M10 20v-5.5h4V20" />
+    </svg>
+  );
+}
 
 export function IconFichas({ className }) {
   return (
@@ -124,4 +136,83 @@ export function IconPlus({ className }) {
       <path d="M12 5v14M5 12h14" />
     </svg>
   );
+}
+
+// -- Iconos tematicos por materia --------------------------------------
+// El backend no guarda un icono por materia, asi que cada una recibe uno de
+// estos de forma determinista (ver pickSubjectIcon mas abajo): mismo id ->
+// siempre el mismo icono, sin depender de datos que no existen.
+
+function IconRed({ className }) {
+  return (
+    <svg className={className} {...base}>
+      <circle cx="6" cy="7" r="2" />
+      <circle cx="18" cy="7" r="2" />
+      <circle cx="12" cy="17" r="2" />
+      <path d="M7.6 8.4 10.6 15.4M16.4 8.4 13.4 15.4M8 7h8" />
+    </svg>
+  );
+}
+
+function IconBarras({ className }) {
+  return (
+    <svg className={className} {...base}>
+      <path d="M4 20V13M9.5 20V9M15 20v-7M20 20V6" />
+      <path d="M4 9.5 9.5 5l5.5 3.5L20 4" />
+    </svg>
+  );
+}
+
+function IconCodigo({ className }) {
+  return (
+    <svg className={className} {...base}>
+      <path d="M9 6 4 12l5 6M15 6l5 6-5 6" />
+    </svg>
+  );
+}
+
+function IconAtomo({ className }) {
+  return (
+    <svg className={className} {...base}>
+      <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+      <ellipse cx="12" cy="12" rx="8.5" ry="3.6" />
+      <ellipse cx="12" cy="12" rx="8.5" ry="3.6" transform="rotate(60 12 12)" />
+      <ellipse cx="12" cy="12" rx="8.5" ry="3.6" transform="rotate(120 12 12)" />
+    </svg>
+  );
+}
+
+function IconBrujula({ className }) {
+  return (
+    <svg className={className} {...base}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M14.8 9.2 13 13l-3.8 1.8L11 11z" />
+    </svg>
+  );
+}
+
+function IconLibro({ className }) {
+  return (
+    <svg className={className} {...base}>
+      <path d="M12 6.2c-1.6-1.2-4-1.7-7-1.4v13c3 .1 5.4.9 7 2.2 1.6-1.3 4-2.1 7-2.2v-13c-3-.3-5.4.2-7 1.4Z" />
+      <path d="M12 6.2V20" />
+    </svg>
+  );
+}
+
+function IconCapas({ className }) {
+  return (
+    <svg className={className} {...base}>
+      <path d="M12 4.5 20 9l-8 4.5L4 9Z" />
+      <path d="M4 13l8 4.5L20 13" />
+    </svg>
+  );
+}
+
+// Cada icono va emparejado (mismo indice) con una frase corta en
+// Illustrations.jsx -- si agregas uno aca, agrega su pareja alla tambien.
+export const ICONOS_MATERIA = [IconRed, IconBarras, IconCodigo, IconAtomo, IconBrujula, IconLibro, IconCapas];
+
+export function pickSubjectIcon(materiaId) {
+  return elegirPorHash(materiaId, ICONOS_MATERIA);
 }

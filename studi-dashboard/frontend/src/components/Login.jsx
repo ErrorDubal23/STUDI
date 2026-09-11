@@ -36,15 +36,26 @@ export default function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-plane px-5 dark:bg-plane-dark">
+    <div className="flex min-h-screen items-center justify-center overflow-hidden bg-plane px-5 dark:bg-plane-dark">
       <div className="studi-noise-overlay" aria-hidden="true" />
+      <div
+        className="pointer-events-none absolute -top-24 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full opacity-70 blur-3xl"
+        style={{ background: "radial-gradient(circle, #ffdfb3, transparent 70%)" }}
+        aria-hidden="true"
+      />
       <div className="relative z-[1] w-full max-w-sm">
-        <div className="mb-6 text-center">
-          <span className="text-[22px] font-bold tracking-tight">
+        <div className="mb-7 text-center">
+          <span className="text-[28px] font-bold tracking-tight">
             STUDI<span className="text-[#2a78d6]">.</span>
           </span>
-          <p className="mt-1 text-[13px] text-ink-muted">
-            {modo === "login" ? "Ingresa a tu cuenta" : "Crea tu cuenta"}
+          <p className="mt-1.5 text-[13px] text-ink-muted">
+            {modo === "login" ? (
+              <>
+                Ingresa a tu <span className="font-script text-[17px] text-[#0f6d5c] dark:text-[#5fd3ac]">semestre</span>
+              </>
+            ) : (
+              "Crea tu cuenta"
+            )}
           </p>
         </div>
 

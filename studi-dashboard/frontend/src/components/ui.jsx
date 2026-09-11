@@ -5,7 +5,8 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { useSubjectById } from "../lib/MateriasContext.jsx";
 import { SPRING_SNAPPY, SPRING_SOFT, TAP_PRESS } from "../lib/motion.js";
-import { IconChevron } from "./Icons.jsx";
+import { IconChevron, pickSubjectIcon } from "./Icons.jsx";
+import { conAlfa, PALETA_CHIPS } from "../lib/visual.js";
 
 const KATEX_OPTIONS = { throwOnError: false, strict: false };
 
@@ -79,6 +80,64 @@ export function SubjectChip({ materiaId, active, onClick, label, groupId = "chip
   );
 }
 
+// Insignia circular con el icono tematico de la materia (ver
+// pickSubjectIcon). tone="oscura" = circulo tinta oscura + icono blanco
+// (tarjeta destacada); tone="tintada" = circulo con el color de la materia
+// muy diluido + icono en el color pleno (tarjetas secundarias/listas).
+export function SubjectIconBadge({ materiaId, tone = "tintada", className = "h-11 w-11" }) {
+  const subject = useSubjectById(materiaId);
+  const Icon = pickSubjectIcon(materiaId);
+  const oscura = tone === "oscura";
+  return (
+    <span
+      className={`flex shrink-0 items-center justify-center rounded-full ${className}`}
+      style={{
+        backgroundColor: oscura ? "#152420" : conAlfa(subject.colorLight, 0.16),
+        color: oscura ? "#ffffff" : subject.colorLight,
+      }}
+    >
+      <Icon className="h-[55%] w-[55%]" />
+    </span>
+  );
+}
+
+// Chip pastel para temas/etiquetas -- color fijo por posicion (no por
+// materia) para que una misma tarjeta muestre variedad, como en la
+// referencia, en vez de que todos los chips de una tarjeta salgan del mismo
+// tono de la materia.
+export function TagChip({ children, index = 0 }) {
+  const color = PALETA_CHIPS[index % PALETA_CHIPS.length];
+  return (
+    <span
+      className="rounded-full px-2.5 py-1 text-[12px] font-medium"
+      style={{ backgroundColor: conAlfa(color, 0.14), color }}
+    >
+      {children}
+    </span>
+  );
+}
+
+// Tile para grillas de estadisticas (icono en circulo tintado + etiqueta +
+// valor). El tinte se calcula por alfa sobre el color dado en vez de una
+// tabla clara/oscura separada, para que se vea bien en ambos temas sin
+// duplicar la paleta.
+export function StatTile({ icon: Icon, label, value, color }) {
+  return (
+    <Card className="flex flex-col gap-2 p-3.5">
+      <span
+        className="flex h-9 w-9 items-center justify-center rounded-full"
+        style={{ backgroundColor: conAlfa(color, 0.16), color }}
+      >
+        <Icon className="h-[52%] w-[52%]" />
+      </span>
+      <div>
+        <p className="text-[11px] text-ink-muted">{label}</p>
+        <p className="text-[17px] font-bold tabular-nums">{value}</p>
+      </div>
+    </Card>
+  );
+}
+
 export function StateMessage({ children }) {
   return (
     <div className="flex min-h-[40vh] items-center justify-center px-6 text-center text-[13px] text-ink-muted">
@@ -95,19 +154,19 @@ export function SectionTitle({ children }) {
   );
 }
 
-export function Card({ children, className = "", accentColor, onClick }) {
+export function Card({ children, className = "", accentColor, onClick, style }) {
   const Comp = onClick ? motion.button : motion.div;
+  const estiloCompuesto = {
+    ...(accentColor ? { boxShadow: `0 0 0 1px ${accentColor}33, 0 10px 28px -10px rgba(30,25,15,0.14)` } : null),
+    ...style,
+  };
   return (
     <Comp
       type={onClick ? "button" : undefined}
       onClick={onClick}
       whileTap={onClick ? TAP_PRESS : undefined}
       className={`w-full rounded-2xl border border-hairline bg-surface p-4 text-left shadow-card dark:border-hairline-dark dark:bg-surface-dark dark:shadow-card-dark ${className}`}
-      style={
-        accentColor
-          ? { boxShadow: `0 0 0 1px ${accentColor}33, 0 10px 28px -10px rgba(30,25,15,0.14)` }
-          : undefined
-      }
+      style={Object.keys(estiloCompuesto).length ? estiloCompuesto : undefined}
     >
       {children}
     </Comp>

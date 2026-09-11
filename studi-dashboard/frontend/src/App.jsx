@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
 import Fichas from "./components/Fichas.jsx";
 import Calendario from "./components/Calendario.jsx";
-import Repaso from "./components/Repaso.jsx";
+import Inicio from "./components/Inicio.jsx";
 import Grabacion from "./components/Grabacion.jsx";
 import Brightspace from "./components/Brightspace.jsx";
 import Login from "./components/Login.jsx";
@@ -12,9 +12,9 @@ import { AuthProvider, useAuth } from "./lib/AuthContext.jsx";
 import { MateriasProvider } from "./lib/MateriasContext.jsx";
 import { SPRING_SNAPPY, SPRING_SOFT, TAP_PRESS } from "./lib/motion.js";
 import {
+  IconInicio,
   IconFichas,
   IconCalendario,
-  IconRepaso,
   IconGrabar,
   IconBrightspace,
   IconMaterias,
@@ -26,7 +26,7 @@ import {
 // vive detras de "Mas" para que las etiquetas no se amontonen en pantallas
 // angostas -- ver App.test antes de agregar un sexto item aqui.
 const PRIMARY = [
-  { id: "repaso", label: "Repaso", Icon: IconRepaso, Component: Repaso },
+  { id: "inicio", label: "Inicio", Icon: IconInicio, Component: Inicio },
   { id: "fichas", label: "Fichas", Icon: IconFichas, Component: Fichas },
   { id: "talleres", label: "Talleres", Icon: IconTalleres, Component: Talleres },
   { id: "grabar", label: "Grabar", Icon: IconGrabar, Component: Grabacion },
@@ -56,7 +56,7 @@ function AuthGate() {
 }
 
 function AppShell() {
-  const [activeTab, setActiveTab] = useState("repaso");
+  const [activeTab, setActiveTab] = useState("inicio");
   const [mostrarMas, setMostrarMas] = useState(false);
   const active = TODOS.find((t) => t.id === activeTab) ?? TODOS[0];
   const ActiveComponent = active.Component;
@@ -87,7 +87,7 @@ function AppShell() {
         </header>
 
         <main className="relative z-[1] flex-1 overflow-y-auto px-4 pb-24 pt-3">
-          <ActiveComponent />
+          <ActiveComponent onNavegar={irA} />
         </main>
 
         <AnimatePresence>
